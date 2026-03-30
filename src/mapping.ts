@@ -50,8 +50,8 @@ import {
   PositionsMerged,
   PriceMarketCreatedPyth,
   PriceMarketResolvedPyth,
-} from '../generated/OctopusProtocol/OctopusProtocol';
-import { ERC20 } from '../generated/OctopusProtocol/ERC20';
+} from '../generated/OddMaki/OddMaki';
+import { ERC20 } from '../generated/OddMaki/ERC20';
 import { PayoutRedemption } from '../generated/ConditionalTokens/ConditionalTokens';
 import {
   Venue,
