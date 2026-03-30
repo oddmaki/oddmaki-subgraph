@@ -1,0 +1,164 @@
+specVersion: 0.0.5
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: OddMaki
+    network: base-sepolia
+    source:
+      abi: OddMaki
+      address: "0x5067a8175086e6b4863660fa165f8605302781e7"
+      startBlock: 39441357
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Venue
+        - Market
+        - MarketGroup
+        - MarketGroupItem
+        - User
+        - Protocol
+        - Order
+        - Trade
+        - TopOfBook
+        - FeeEvent
+        - Question
+        - Assertion
+        - AccessControlContract
+        - MarketAccessControl
+        - PriceMarket
+      abis:
+        - name: OddMaki
+          file: ./abis/OddMaki.json
+        - name: ERC20
+          file: ./abis/ERC20.json
+      eventHandlers:
+        # Venue lifecycle
+        - event: VenueCreated(indexed uint256,indexed address,string,string)
+          handler: handleVenueCreated
+        - event: VenueUpdated(indexed uint256,indexed address,string,string)
+          handler: handleVenueUpdated
+        - event: VenuePaused(indexed uint256,indexed address)
+          handler: handleVenuePaused
+        - event: VenueUnpaused(indexed uint256,indexed address)
+          handler: handleVenueUnpaused
+        - event: VenueFeesUpdated(indexed uint256,uint256,uint256)
+          handler: handleVenueFeesUpdated
+        - event: VenueOracleParamsUpdated(indexed uint256,uint256,uint256)
+          handler: handleVenueOracleParamsUpdated
+        - event: VenueAccessControlUpdated(indexed uint256,address,address)
+          handler: handleVenueAccessControlUpdated
+        # Access control
+        - event: AccessControlDeployed(indexed address,indexed address,string)
+          handler: handleAccessControlDeployed
+        - event: MarketTradingAccessControlSet(indexed uint256,indexed address)
+          handler: handleMarketTradingAccessControlSet
+        - event: MarketTradingAccessControlRemoved(indexed uint256)
+          handler: handleMarketTradingAccessControlRemoved
+        # Market creation (enriched event from LibMarketCreationService)
+        - event: MarketCreated(indexed uint256,indexed uint256,indexed
+            address,bytes32,address,uint256,string,string[],uint256,bytes32[])
+          handler: handleMarketCreated
+        # Market groups
+        - event: MarketGroupCreated(indexed uint256,indexed uint256,indexed
+            address,string,uint256,bytes32[])
+          handler: handleMarketGroupCreated
+        - event: MarketAddedToGroup(indexed uint256,indexed uint256,string,string)
+          handler: handleMarketAddedToGroup
+        - event: PlaceholderMarketsAdded(indexed uint256,uint256[],uint256)
+          handler: handlePlaceholderMarketsAdded
+        - event: PlaceholderActivated(indexed uint256,indexed
+            uint256,string,string,uint256)
+          handler: handlePlaceholderActivated
+        - event: MarketGroupActivated(indexed uint256,uint256,uint256)
+          handler: handleMarketGroupActivated
+        # Order lifecycle
+        - event: OrderPlaced(indexed uint256,indexed uint256,uint256,uint8,uint256,uint256,indexed
+            address)
+          handler: handleOrderPlaced
+        - event: OrderCancelled(indexed uint256)
+          handler: handleOrderCancelled
+        - event: OrderExpired(indexed uint256,indexed address,uint256)
+          handler: handleOrderExpired
+        - event: OrderDeleted(indexed uint256)
+          handler: handleOrderDeleted
+        # Matching & fills
+        - event: OrderFilled(indexed uint256,indexed uint256,indexed
+            uint256,uint256,uint256,uint256)
+          handler: handleOrderFilled
+        - event: MintFill(indexed uint256,uint256,uint256,uint256,uint256,uint256)
+          handler: handleMintFill
+        - event: MergeFill(indexed uint256,uint256,uint256,uint256,uint256,uint256)
+          handler: handleMergeFill
+        - event: TradeExecuted(indexed uint256,indexed uint256,indexed uint256,uint256,uint256,uint256,uint256)
+          handler: handleTradeExecuted
+        # Fees
+        - event: FeesDistributed(indexed uint256,indexed
+            uint256,uint256,uint256,uint256,uint256,uint256)
+          handler: handleFeesDistributed
+        # Order book state
+        - event: TopOfBookChanged(indexed uint256,indexed uint256,uint8,uint256)
+          handler: handleTopOfBookChanged
+        # Market orders
+        - event: MarketOrderExecuted(indexed address,indexed
+            uint256,uint256,uint256,uint256,uint256,uint256)
+          handler: handleMarketOrderExecuted
+        # Resolution
+        - event: AssertionCreated(indexed bytes32,indexed bytes32,string,address)
+          handler: handleAssertionCreated
+        - event: AssertionSettled(indexed bytes32,bool)
+          handler: handleAssertionSettled
+        - event: AssertionDisputed(indexed bytes32)
+          handler: handleAssertionDisputed
+        - event: MarketResolved(indexed uint256,indexed bytes32,string)
+          handler: handleMarketResolved
+        - event: MarketGroupResolved(indexed uint256,indexed uint256)
+          handler: handleMarketGroupResolved
+        # NegRisk
+        - event: WrappedCollateralRegistered(indexed address,indexed address)
+          handler: handleWrappedCollateralRegistered
+        # Tags
+        - event: MarketTagsUpdated(indexed uint256,bytes32[])
+          handler: handleMarketTagsUpdated
+        - event: MarketGroupTagsUpdated(indexed uint256,bytes32[])
+          handler: handleMarketGroupTagsUpdated
+        # Metadata
+        - event: MarketMetadataUpdated(indexed uint256,string)
+          handler: handleMarketMetadataUpdated
+        - event: MarketGroupMetadataUpdated(indexed uint256,string)
+          handler: handleMarketGroupMetadataUpdated
+        # Price Markets (Pyth)
+        - event: PriceMarketCreatedPyth(indexed uint256,indexed uint256,indexed bytes32,int64,int32,uint256,uint256,uint256)
+          handler: handlePriceMarketCreatedPyth
+        - event: PriceMarketResolvedPyth(indexed uint256,int64,int64,string)
+          handler: handlePriceMarketResolvedPyth
+        # Vault: user-initiated split/merge
+        - event: PositionSplit(indexed address,indexed uint256,uint256)
+          handler: handlePositionSplit
+        - event: PositionsMerged(indexed address,indexed uint256,uint256)
+          handler: handlePositionsMerged
+      file: ./src/mapping.ts
+  - kind: ethereum
+    name: ConditionalTokens
+    network: base-sepolia
+    source:
+      abi: ConditionalTokens
+      address: "0x7364747372Ac4a175B5326f5B2C9CB1C271d32e8"
+      startBlock: 39441357
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - TraderPosition
+        - ConditionMarket
+        - User
+      abis:
+        - name: ConditionalTokens
+          file: ./abis/ConditionalTokens.json
+      eventHandlers:
+        - event: PayoutRedemption(indexed address,indexed address,indexed bytes32,bytes32,uint256[],uint256)
+          handler: handlePayoutRedemption
+      file: ./src/mapping.ts

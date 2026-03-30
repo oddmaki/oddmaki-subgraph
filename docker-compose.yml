@@ -1,0 +1,46 @@
+services:
+  graph-node:
+    image: graphprotocol/graph-node:latest
+    ports:
+      - '8900:8000'   # GraphQL HTTP server (changed from 8000 to avoid conflicts)
+      - '8901:8001'   # GraphQL WebSocket server
+      - '8920:8020'   # JSON-RPC admin server
+      - '8930:8030'   # Subgraph indexing status
+      - '8940:8040'   # Prometheus metrics
+    depends_on:
+      - ipfs
+      - postgres
+    environment:
+      postgres_host: postgres
+      postgres_user: graph-node
+      postgres_pass: let-me-in
+      postgres_db: graph-node
+      ipfs: 'ipfs:5001'
+      # Connect to Anvil running on host machine
+      ethereum: 'localhost:http://host.docker.internal:8545'
+      GRAPH_LOG: info
+      GRAPH_ALLOW_NON_DETERMINISTIC_FULLTEXT_SEARCH: 'true'
+    restart: unless-stopped
+
+  ipfs:
+    image: ipfs/kubo:latest
+    ports:
+      - '5001:5001'   # IPFS API
+    volumes:
+      - ./data/ipfs:/data/ipfs
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:14
+    ports:
+      - '5433:5432'  # Changed to 5433 to avoid conflict with system PostgreSQL
+    command: ["postgres", "-cshared_preload_libraries=pg_stat_statements"]
+    environment:
+      POSTGRES_USER: graph-node
+      POSTGRES_PASSWORD: let-me-in
+      POSTGRES_DB: graph-node
+      # Increase performance for local development
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    restart: unless-stopped

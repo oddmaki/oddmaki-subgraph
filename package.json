@@ -1,0 +1,35 @@
+{
+  "name": "oddmaki-subgraph",
+  "version": "1.0.0",
+  "description": "The Graph subgraph for OddMaki - on-chain CLOB prediction markets",
+  "scripts": {
+    "update-addresses": "node ../script/update-subgraph.js",
+    "codegen": "graph codegen",
+    "build": "graph build",
+    "create-local": "graph create oddmaki --node http://localhost:8920",
+    "remove-local": "graph remove oddmaki --node http://localhost:8920",
+    "deploy-local": "graph deploy oddmaki --version-label v0.0.1 --ipfs http://localhost:5001 --node http://localhost:8920",
+    "deploy-base-sepolia": "graph deploy oddmaki --version-label ${VERSION:-v1.1.0} subgraph.base-sepolia.yaml",
+    "deploy-base": "graph deploy oddmaki --version-label ${VERSION:-v1.0.0} subgraph.base.yaml",
+    "graph-node:up": "docker-compose up -d",
+    "graph-node:down": "docker-compose down",
+    "graph-node:logs": "docker-compose logs -f graph-node",
+    "graph-node:restart": "docker-compose restart",
+    "graph-node:reset": "docker-compose down && rm -rf data/ && docker-compose up -d",
+    "graph-node:clean": "docker-compose down && rm -rf data/"
+  },
+  "keywords": [
+    "graph",
+    "subgraph",
+    "prediction-markets",
+    "clob",
+    "oddmaki"
+  ],
+  "author": "OddMaki",
+  "license": "MIT",
+  "packageManager": "pnpm@10.13.1",
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "^0.98.1",
+    "@graphprotocol/graph-ts": "^0.38.2"
+  }
+}

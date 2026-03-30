@@ -1,0 +1,478 @@
+# OddMaki Protocol Subgraph Schema
+
+# ============================================
+# Venue Entities
+# ============================================
+
+type Venue @entity(immutable: false) {
+  id: ID! # venueId as string
+  venueId: BigInt! # Venue ID from contract
+  operator: Bytes! # Venue operator address
+  name: String! # Venue name
+  metadata: String! # IPFS hash or JSON metadata
+  # Fee configuration
+  venueFeeBps: BigInt! # Venue fee in basis points
+  creatorFeeBps: BigInt! # Creator fee in basis points
+  # Oracle configuration
+  umaRewardAmount: BigInt! # UMA assertion reward
+  umaMinBond: BigInt! # UMA minimum bond
+  # Access control
+  tradingAccessControl: Bytes! # Trading AC contract address (0x0 = public)
+  creationAccessControl: Bytes! # Creation AC contract address (0x0 = public)
+  # State
+  paused: Boolean! # Whether venue is paused
+  # Relationships
+  markets: [Market!]! @derivedFrom(field: "venue")
+  marketGroups: [MarketGroup!]! @derivedFrom(field: "venue")
+
+  # Statistics
+  totalMarkets: BigInt! # Total markets created
+  totalMarketGroups: BigInt! # Total market groups created
+  activeMarkets: BigInt! # Currently active markets
+  totalVolume: BigInt! # Total trading volume
+  totalFees: BigInt! # Total fees collected
+  # Timestamps
+  createdAt: BigInt! # Block timestamp
+  createdAtBlock: BigInt! # Block number
+  updatedAt: BigInt! # Last update timestamp
+}
+
+# ============================================
+# Market Entities
+# ============================================
+
+type Market @entity(immutable: false) {
+  id: ID! # marketId as string
+  marketId: BigInt! # Market ID from contract
+  venue: Venue! # Parent venue
+  creator: User! # Market creator
+  # Market Group
+  groupId: BigInt! # 0 = standalone, >0 = part of market group
+  marketGroup: MarketGroup # Parent market group (null if standalone)
+  marketGroupItem: MarketGroupItem # Market group specific metadata (null if standalone)
+  # Market details (all from enriched MarketCreated event — no cross-event dependency)
+  question: String! # Market question
+  outcomes: [String!]! # Array of outcome names
+  outcomeSlotCount: BigInt! # Number of outcomes
+  # Trading parameters
+  collateralToken: Bytes! # Collateral token address
+  collateralDecimals: Int # Decimals of collateral token (6 for USDC, 18 for ETH, etc.)
+  conditionId: Bytes! # CTF condition ID
+  tickSize: BigInt! # Price tick size
+  # Market Prices (Last Trade Prices)
+  lastPriceTick_0: BigInt # Last trade price for outcome 0 (raw tick)
+  lastPriceTick_1: BigInt # Last trade price for outcome 1 (raw tick)
+  lastTradeTimestamp: BigInt # Timestamp of last trade
+  # Resolution
+  status: MarketStatus! # Current market status
+  resolvedOutcome: Int # Winning outcome index (null if unresolved)
+  resolvedAt: BigInt # Resolution timestamp
+  # Relationships
+  orders: [Order!]! @derivedFrom(field: "market")
+  trades: [Trade!]! @derivedFrom(field: "market")
+  fills: [Fill!]! @derivedFrom(field: "market")
+  topOfBook: [TopOfBook!]! @derivedFrom(field: "market")
+  fees: [FeeEvent!]! @derivedFrom(field: "market")
+
+  # Statistics
+  totalOrders: BigInt! # Total orders placed
+  totalVolume: BigInt! # Total volume traded
+  totalFees: BigInt! # Total fees collected
+  uniqueTraders: BigInt! # Number of unique traders
+  # Tags
+  tags: [String!]! # Category tags (decoded from bytes32[])
+  # Metadata
+  metadataURI: String # IPFS URI for market metadata (event-only, via MetadataFacet)
+  # Price Market
+  isPriceMarket: Boolean! # True if this is a Pyth price market
+  priceMarket: PriceMarket # Pyth price market overlay (null if not a price market)
+  # Timestamps
+  createdAt: BigInt! # Block timestamp
+  createdAtBlock: BigInt! # Block number
+}
+
+type PriceMarket @entity(immutable: false) {
+  id: ID! # marketId as string
+  market: Market!
+  provider: String! # "pyth"
+  feedId: Bytes!
+  strikePrice: BigInt! # Reference price: captured open price (Up/Down) or explicit target (strike)
+  priceExpo: Int!
+  openTime: BigInt!
+  closeTime: BigInt!
+  resolutionWindow: BigInt!
+  finalPrice: BigInt
+  resolved: Boolean!
+  outcome: String
+  resolvedAt: BigInt
+}
+
+enum MarketStatus {
+  Draft # Market created but not yet active (for market groups)
+  Active # Market is active and trading
+  Resolved # Market has been resolved
+  Invalid # Market resolved as invalid
+}
+
+# ============================================
+# Market Group Entities
+# ============================================
+
+type MarketGroup @entity(immutable: false) {
+  id: ID! # groupId as string
+  groupId: BigInt! # Unique group identifier
+  venue: Venue! # Parent venue
+  creator: User! # Group creator
+  # Group configuration
+  marketQuestion: String! # UI display question (e.g., "Where will Giannis be traded?")
+  # Market tracking
+  totalMarkets: BigInt! # FIXED at activation (for conversion math)
+  activeMarketCount: BigInt! # Number of active (non-placeholder) markets
+  # State
+  status: MarketStatus! # Draft -> Active -> Resolved
+  resolvedMarketId: BigInt! # Which market won (0 = not resolved)
+  # Relationships
+  markets: [Market!]! @derivedFrom(field: "marketGroup")
+  marketIds: [String!]! # Stored array of market IDs (for handler access)
+
+  # Tags
+  tags: [String!]! # Category tags (decoded from bytes32[])
+  # Metadata
+  metadataURI: String # IPFS URI for group metadata (event-only, via MetadataFacet)
+  # Timestamps
+  createdAt: BigInt! # Creation timestamp
+  createdAtBlock: BigInt! # Creation block
+  activatedAt: BigInt # Activation timestamp
+  resolvedAt: BigInt # Resolution timestamp
+}
+
+type MarketGroupItem @entity(immutable: false) {
+  id: ID! # marketId as string
+  market: Market! # Parent market (one-to-one)
+  marketGroup: MarketGroup! # Parent market group
+  # Item metadata
+  marketName: String! # Short name for UI: "Warriors", "$78k-$80k"
+  isPlaceholder: Boolean! # True if created as placeholder
+  # Timestamps
+  createdAt: BigInt! # Creation timestamp
+  activatedAt: BigInt # Activation timestamp (for placeholders)
+}
+
+# ============================================
+# User Entities
+# ============================================
+
+type User @entity(immutable: false) {
+  id: ID! # User address
+  address: Bytes! # User address
+  # Relationships
+  marketsCreated: [Market!]! @derivedFrom(field: "creator")
+  marketGroupsCreated: [MarketGroup!]! @derivedFrom(field: "creator")
+  orders: [Order!]! @derivedFrom(field: "trader")
+  fills: [Fill!]! @derivedFrom(field: "trader")
+  positions: [TraderPosition!]! @derivedFrom(field: "trader")
+
+  # Statistics
+  totalOrdersPlaced: BigInt! # Total orders placed
+  totalVolume: BigInt! # Total volume traded
+  totalMarkets: BigInt! # Markets created
+  totalMarketGroups: BigInt! # Market groups created
+  totalTradeCount: BigInt! # Total trade fills
+  totalMarketsTraded: BigInt! # Distinct markets traded in
+  totalRealizedPnL: BigInt! # Cumulative realized P&L (signed)
+  # Timestamps
+  firstSeenAt: BigInt! # First interaction timestamp
+  lastSeenAt: BigInt! # Last interaction timestamp
+}
+
+# ============================================
+# Order Entities
+# ============================================
+
+type Order @entity(immutable: false) {
+  id: ID! # orderId as string
+  orderId: BigInt! # Order ID from contract
+  market: Market! # Parent market
+  trader: User! # Order placer
+  # Order details
+  outcome: BigInt! # Outcome index
+  side: OrderSide! # BUY or SELL
+  tick: BigInt! # Price tick
+  amount: BigInt! # Original amount
+  filled: BigInt! # Amount filled
+  # State
+  status: OrderStatus! # Current status
+  deleted: Boolean! # Whether the order was removed from the book
+  # Timestamps
+  createdAt: BigInt! # Placement timestamp
+  createdAtBlock: BigInt! # Placement block
+  cancelledAt: BigInt # Cancellation timestamp (if cancelled)
+  expiredAt: BigInt # Expiry timestamp (if expired)
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  Active
+  Filled
+  PartiallyFilled
+  Cancelled
+  Expired
+}
+
+# ============================================
+# Trade Entities
+# ============================================
+
+# Market-level trade event: one per match regardless of how many participants.
+# OrderFill → 1 Trade. MintFill → 2 Trades (YES + NO outcomes at different prices).
+# MergeFill → 0 Trades (position exit, not a trade). MarketOrder → 1 Trade.
+type Trade @entity(immutable: true) {
+  id: ID! # tx-logIndex (OrderFill, MarketOrder), tx-logIndex-0/1 (MintFill)
+  market: Market!
+  outcome: BigInt!
+  tick: BigInt!
+  amount: BigInt!
+  cost: BigInt!
+  tradeType: TradeType!
+  buyTrader: User # set for OrderFill, MintFill, MarketOrder
+  sellTrader: User # set for OrderFill only
+  avgPrice: BigInt # MarketOrder only
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+# Per-participant fill record: one per order execution.
+# OrderFill → 2 Fills (buyer + seller). MintFill → 2 Fills (YES buyer + NO buyer).
+# MergeFill → 2 Fills (YES seller + NO seller). MarketOrder → 1 Fill (buyer).
+type Fill @entity(immutable: true) {
+  id: ID! # tx-logIndex-buy/sell (OrderFill), tx-logIndex-0/1 (MintFill/MergeFill), tx-logIndex (MarketOrder)
+  market: Market!
+  outcome: BigInt!
+  side: OrderSide!
+  tick: BigInt!
+  amount: BigInt!
+  cost: BigInt!
+  fees: BigInt!
+  trader: User!
+  tradeType: TradeType!
+  avgPrice: BigInt # MarketOrder only
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+enum TradeType {
+  OrderFill # Normal fill (buyer-seller match)
+  MintFill # CTF splitPosition (YES+NO minted)
+  MergeFill # CTF mergePositions (YES+NO redeemed)
+  MarketOrder # Market order execution
+}
+
+# ============================================
+# Market-Trader Deduplication
+# ============================================
+
+type MarketTrader @entity(immutable: true) {
+  id: ID! # marketId-traderAddress
+  market: Market!
+  trader: User!
+  firstTradeAt: BigInt! # Timestamp of first trade
+}
+
+# ============================================
+# Trader Position Entities (P&L tracking)
+# ============================================
+
+type TraderPosition @entity(immutable: false) {
+  id: ID! # traderAddress-marketId-outcomeIndex
+  trader: User!
+  market: Market!
+  venue: Venue! # Denormalized for venue-level leaderboard queries
+  outcome: BigInt! # 0=YES, 1=NO
+  # Position state
+  quantity: BigInt! # Current token balance
+  totalCostBasis: BigInt! # Collateral spent on current position
+  avgEntryPrice: BigInt! # Weighted average entry price (scaled 1e18)
+  # Realized P&L
+  realizedPnL: BigInt! # Cumulative realized P&L (signed)
+  totalCollateralIn: BigInt! # Total collateral deposited (buys)
+  totalCollateralOut: BigInt! # Total collateral received (sells/merges)
+  # Trade counts
+  buyCount: BigInt!
+  sellCount: BigInt!
+  # Timestamps
+  firstTradeAt: BigInt!
+  lastTradeAt: BigInt!
+}
+
+# ============================================
+# Fee Entities
+# ============================================
+
+type FeeEvent @entity(immutable: true) {
+  id: ID! # tx hash + log index
+  market: Market! # Parent market
+  fillId: BigInt! # Fill ID from matching engine
+
+  # Fee breakdown
+  protocolFee: BigInt! # Protocol fee amount
+  venueFee: BigInt! # Venue fee amount
+  creatorFee: BigInt! # Creator fee amount
+  operatorFee: BigInt! # Operator fee amount
+  totalFees: BigInt! # Total fees
+
+  # Timestamps
+  timestamp: BigInt! # Block timestamp
+  blockNumber: BigInt! # Block number
+  transactionHash: Bytes! # Transaction hash
+}
+
+# ============================================
+# Order Book State
+# ============================================
+
+type TopOfBook @entity(immutable: false) {
+  id: ID! # marketId + outcome + side
+  market: Market! # Parent market
+  outcome: BigInt! # Outcome index
+  side: OrderSide! # BUY or SELL
+
+  # Best price
+  topTick: BigInt! # Best tick (price)
+
+  # Timestamps
+  updatedAt: BigInt! # Last update timestamp
+  updatedAtBlock: BigInt! # Last update block
+}
+
+# ============================================
+# Oracle / UMA Entities
+# ============================================
+
+type Question @entity(immutable: false) {
+  id: ID! # questionId (bytes32)
+  questionId: Bytes! # Question ID
+  conditionId: Bytes! # CTF condition ID
+  market: Market # Associated market (nullable during creation)
+  # Question details (UMA ancillary data format)
+  ancillaryData: Bytes! # Raw ancillary data (full UMA format) - parse off-chain in SDK
+  # Oracle parameters
+  liveness: BigInt! # Challenge period in seconds (minimum 2 hours)
+  requiredBond: BigInt! # Bond amount required for assertions
+  currency: Bytes! # Currency token address for bonds
+  reward: BigInt! # Reward for correct assertions
+  # Resolution
+  resolved: Boolean! # Whether resolved
+  outcome: String # Final outcome (if resolved)
+  # Active assertion tracking (locks market from concurrent assertions)
+  activeAssertion: Assertion # Current active/resolved assertion
+  # Relationships
+  assertions: [Assertion!]! @derivedFrom(field: "question")
+
+  # Timestamps
+  createdAt: BigInt! # Initialization timestamp
+  resolvedAt: BigInt # Resolution timestamp
+}
+
+type Assertion @entity(immutable: false) {
+  id: ID! # assertionId (bytes32)
+  assertionId: Bytes! # Assertion ID
+  question: Question! # Parent question
+  # Assertion details
+  asserter: Bytes! # Address that made assertion
+  proposedOutcome: String! # Asserted outcome
+  # Status
+  settled: Boolean! # Whether settled (via optimistic liveness or dispute resolution)
+  result: Boolean # Settlement result (true = accepted/truthful, false = rejected)
+  disputed: Boolean! # Whether this assertion was disputed
+  # Timestamps
+  createdAt: BigInt! # Assertion timestamp
+  settledAt: BigInt # Settlement timestamp (after liveness or dispute)
+}
+
+# ============================================
+# Protocol Statistics
+# ============================================
+
+type Protocol @entity(immutable: false) {
+  id: ID! # Singleton: "1"
+  # Totals
+  totalVenues: BigInt! # Total venues created
+  totalMarkets: BigInt! # Total markets created
+  totalMarketGroups: BigInt! # Total market groups created
+  totalVolume: BigInt! # Total volume traded
+  totalFees: BigInt! # Total fees collected
+  totalUsers: BigInt! # Total unique users
+  # Updated timestamp
+  updatedAt: BigInt!
+}
+
+# ============================================
+# Daily Snapshot Entities (for analytics)
+# ============================================
+
+type VenueDailySnapshot @entity(immutable: true) {
+  id: ID! # venueId + day timestamp
+  venue: Venue! # Parent venue
+
+  # Daily metrics
+  dailyVolume: BigInt! # Volume for the day
+  dailyFees: BigInt! # Fees for the day
+  dailyActiveUsers: BigInt! # Unique users for the day
+
+  # Cumulative
+  cumulativeVolume: BigInt! # Cumulative volume
+  cumulativeFees: BigInt! # Cumulative fees
+
+  # Timestamp
+  timestamp: BigInt! # Day start timestamp
+}
+
+# ============================================
+# Access Control Entities
+# ============================================
+
+type AccessControlContract @entity(immutable: true) {
+  id: ID! # contract address
+  deployer: Bytes! # Address that deployed the contract
+  acType: String! # "Whitelist" | "NFTGated" | "TokenGated"
+  deployedAt: BigInt! # Block timestamp
+}
+
+type MarketAccessControl @entity(immutable: false) {
+  id: ID! # marketId as string
+  market: Market! # Parent market
+  tradingAccessControl: Bytes! # AC contract address
+  updatedAt: BigInt! # Last update timestamp
+}
+
+# ============================================
+# Lookup Entities
+# ============================================
+
+type ConditionMarket @entity(immutable: true) {
+  id: Bytes! # conditionId (bytes32)
+  marketId: String! # Market entity ID
+}
+
+type MarketDailySnapshot @entity(immutable: true) {
+  id: ID! # marketId + day timestamp
+  market: Market! # Parent market
+
+  # Daily metrics
+  dailyVolume: BigInt! # Volume for the day
+  dailyTrades: BigInt! # Number of trades
+  dailyActiveUsers: BigInt! # Unique users for the day
+
+  # Cumulative
+  cumulativeVolume: BigInt! # Cumulative volume
+  cumulativeTrades: BigInt! # Cumulative trades
+
+  # Timestamp
+  timestamp: BigInt! # Day start timestamp
+}

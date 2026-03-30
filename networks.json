@@ -1,0 +1,26 @@
+{
+  "localhost": {
+    "OddMaki": {
+      "address": "0x0000000000000000000000000000000000000000"
+    },
+    "ConditionalTokens": {
+      "address": "0x0000000000000000000000000000000000000000"
+    }
+  },
+  "base-sepolia": {
+    "OddMaki": {
+      "address": "0x5067a8175086e6b4863660fa165f8605302781e7"
+    },
+    "ConditionalTokens": {
+      "address": "0x7364747372Ac4a175B5326f5B2C9CB1C271d32e8"
+    }
+  },
+  "base": {
+    "OddMaki": {
+      "address": "0x0000000000000000000000000000000000000000"
+    },
+    "ConditionalTokens": {
+      "address": "0x0000000000000000000000000000000000000000"
+    }
+  }
+}
