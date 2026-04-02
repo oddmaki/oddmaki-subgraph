@@ -7,7 +7,7 @@ dataSources:
     network: base-sepolia
     source:
       abi: OddMaki
-      address: "0x5067a8175086e6b4863660fa165f8605302781e7"
+      address: "0x2612a6949a4eeafa0bc39a7d82e0c926d4180d99"
       startBlock: 39441357
     mapping:
       kind: ethereum/events

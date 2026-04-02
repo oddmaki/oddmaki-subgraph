@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "The Graph subgraph for OddMaki - on-chain CLOB prediction markets",
   "scripts": {
-    "update-addresses": "node ../script/update-subgraph.js",
+    "sync-core": "node script/sync-core.js",
     "codegen": "graph codegen",
     "build": "graph build",
     "create-local": "graph create oddmaki --node http://localhost:8920",
