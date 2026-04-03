@@ -32,6 +32,7 @@ import {
   FeesDistributed,
   TopOfBookChanged,
   MarketOrderExecuted,
+  MarketSellExecuted,
   AssertionCreated,
   AssertionSettled,
   AssertionDisputed,
@@ -1485,6 +1486,111 @@ export function handleMarketOrderExecuted(event: MarketOrderExecuted): void {
       event.params.outcomeId.toString(),
       event.params.collateralSpent.toString(),
       event.params.tokensReceived.toString(),
+    ],
+  );
+}
+
+export function handleMarketSellExecuted(event: MarketSellExecuted): void {
+  let marketId = event.params.marketId;
+  let market = Market.load(marketId.toString());
+
+  if (market == null) {
+    log.warning('Market {} not found in MarketSellExecuted event', [
+      marketId.toString(),
+    ]);
+    return;
+  }
+
+  // Get or create user
+  let user = getOrCreateUser(event.params.seller, event.block.timestamp);
+
+  let baseId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+  ]);
+
+  let tickSize = market.tickSize;
+  let priceTick = tickSize.isZero()
+    ? BigInt.fromI32(0)
+    : event.params.avgPrice.div(tickSize);
+
+  // Create market-level Trade entity
+  let trade = new Trade(baseId);
+  trade.market = marketId.toString();
+  trade.outcome = event.params.outcomeId;
+  trade.tick = priceTick;
+  trade.amount = event.params.tokensSold;
+  trade.cost = event.params.collateralReceived;
+  trade.tradeType = 'MarketOrder';
+  trade.sellTrader = user.id;
+  trade.avgPrice = event.params.avgPrice;
+  trade.timestamp = event.block.timestamp;
+  trade.blockNumber = event.block.number;
+  trade.transactionHash = event.transaction.hash;
+  trade.save();
+
+  // Create per-participant Fill entity
+  let fill = new Fill(baseId);
+  fill.market = marketId.toString();
+  fill.outcome = event.params.outcomeId;
+  fill.side = 'SELL';
+  fill.tick = priceTick;
+  fill.amount = event.params.tokensSold;
+  fill.cost = event.params.collateralReceived;
+  fill.fees = BigInt.fromI32(0); // Fees tracked separately
+  fill.trader = user.id;
+  fill.tradeType = 'MarketOrder';
+  fill.avgPrice = event.params.avgPrice;
+  fill.timestamp = event.block.timestamp;
+  fill.blockNumber = event.block.number;
+  fill.transactionHash = event.transaction.hash;
+  fill.save();
+
+  // Update market price from market sell
+  if (!tickSize.isZero()) {
+    if (event.params.outcomeId.equals(BigInt.fromI32(0))) {
+      market.lastPriceTick_0 = priceTick;
+    } else if (event.params.outcomeId.equals(BigInt.fromI32(1))) {
+      market.lastPriceTick_1 = priceTick;
+    }
+    market.lastTradeTimestamp = event.block.timestamp;
+  }
+
+  // Track unique trader
+  trackUniqueTrader(market, user.id, event.block.timestamp);
+
+  // Update trader position (market sell: tokens sold → collateral received)
+  updateTraderPosition(
+    user.id, marketId.toString(), event.params.outcomeId,
+    'SELL', event.params.tokensSold, event.params.collateralReceived,
+    event.block.timestamp,
+  );
+
+  // Update market statistics
+  market.totalVolume = market.totalVolume.plus(event.params.tokensSold);
+  market.save();
+
+  // Update user statistics
+  user.totalVolume = user.totalVolume.plus(event.params.tokensSold);
+  user.totalTradeCount = user.totalTradeCount.plus(BigInt.fromI32(1));
+  user.save();
+
+  // Update protocol statistics
+  let protocol = getOrCreateProtocol();
+  protocol.totalVolume = protocol.totalVolume.plus(
+    event.params.tokensSold,
+  );
+  protocol.updatedAt = event.block.timestamp;
+  protocol.save();
+
+  log.info(
+    'MarketSellExecuted: seller={}, market={}, outcome={}, sold={}, received={}',
+    [
+      event.params.seller.toHexString(),
+      marketId.toString(),
+      event.params.outcomeId.toString(),
+      event.params.tokensSold.toString(),
+      event.params.collateralReceived.toString(),
     ],
   );
 }

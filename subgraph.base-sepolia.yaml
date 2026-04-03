@@ -105,6 +105,9 @@ dataSources:
         - event: MarketOrderExecuted(indexed address,indexed
             uint256,uint256,uint256,uint256,uint256,uint256)
           handler: handleMarketOrderExecuted
+        - event: MarketSellExecuted(indexed address,indexed
+            uint256,uint256,uint256,uint256,uint256,uint256)
+          handler: handleMarketSellExecuted
         # Resolution
         - event: AssertionCreated(indexed bytes32,indexed bytes32,string,address)
           handler: handleAssertionCreated
