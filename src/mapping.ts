@@ -954,6 +954,14 @@ export function handleOrderFilled(event: OrderFilled): void {
   market.totalVolume = market.totalVolume.plus(event.params.qty);
   market.save();
 
+  // Update venue statistics
+  let venue = Venue.load(market.venue);
+  if (venue != null) {
+    venue.totalVolume = venue.totalVolume.plus(event.params.qty);
+    venue.updatedAt = event.block.timestamp;
+    venue.save();
+  }
+
   // Update protocol statistics
   let protocol = getOrCreateProtocol();
   protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
@@ -1127,6 +1135,14 @@ export function handleMintFill(event: MintFill): void {
   market.totalVolume = market.totalVolume.plus(event.params.qty);
   market.save();
 
+  // Update venue statistics
+  let mintVenue = Venue.load(market.venue);
+  if (mintVenue != null) {
+    mintVenue.totalVolume = mintVenue.totalVolume.plus(event.params.qty);
+    mintVenue.updatedAt = event.block.timestamp;
+    mintVenue.save();
+  }
+
   // Update protocol statistics
   let protocol = getOrCreateProtocol();
   protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
@@ -1257,6 +1273,14 @@ export function handleMergeFill(event: MergeFill): void {
   market.totalVolume = market.totalVolume.plus(event.params.qty);
   market.save();
 
+  // Update venue statistics
+  let mergeVenue = Venue.load(market.venue);
+  if (mergeVenue != null) {
+    mergeVenue.totalVolume = mergeVenue.totalVolume.plus(event.params.qty);
+    mergeVenue.updatedAt = event.block.timestamp;
+    mergeVenue.save();
+  }
+
   // Update protocol statistics
   let protocol = getOrCreateProtocol();
   protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
@@ -1329,6 +1353,14 @@ export function handleFeesDistributed(event: FeesDistributed): void {
   // Update market total fees
   market.totalFees = market.totalFees.plus(event.params.totalFee);
   market.save();
+
+  // Update venue total fees
+  let feeVenue = Venue.load(market.venue);
+  if (feeVenue != null) {
+    feeVenue.totalFees = feeVenue.totalFees.plus(event.params.totalFee);
+    feeVenue.updatedAt = event.block.timestamp;
+    feeVenue.save();
+  }
 
   // Update protocol statistics
   let protocol = getOrCreateProtocol();
@@ -1465,6 +1497,14 @@ export function handleMarketOrderExecuted(event: MarketOrderExecuted): void {
   market.totalVolume = market.totalVolume.plus(event.params.tokensReceived);
   market.save();
 
+  // Update venue statistics
+  let buyVenue = Venue.load(market.venue);
+  if (buyVenue != null) {
+    buyVenue.totalVolume = buyVenue.totalVolume.plus(event.params.tokensReceived);
+    buyVenue.updatedAt = event.block.timestamp;
+    buyVenue.save();
+  }
+
   // Update user statistics
   user.totalVolume = user.totalVolume.plus(event.params.tokensReceived);
   user.totalTradeCount = user.totalTradeCount.plus(BigInt.fromI32(1));
@@ -1569,6 +1609,14 @@ export function handleMarketSellExecuted(event: MarketSellExecuted): void {
   // Update market statistics
   market.totalVolume = market.totalVolume.plus(event.params.tokensSold);
   market.save();
+
+  // Update venue statistics
+  let sellVenue = Venue.load(market.venue);
+  if (sellVenue != null) {
+    sellVenue.totalVolume = sellVenue.totalVolume.plus(event.params.tokensSold);
+    sellVenue.updatedAt = event.block.timestamp;
+    sellVenue.save();
+  }
 
   // Update user statistics
   user.totalVolume = user.totalVolume.plus(event.params.tokensSold);
