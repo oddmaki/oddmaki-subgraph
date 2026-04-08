@@ -62,7 +62,10 @@ type Market @entity(immutable: false) {
   # Market Prices (Last Trade Prices)
   lastPriceTick_0: BigInt # Last trade price for outcome 0 (raw tick)
   lastPriceTick_1: BigInt # Last trade price for outcome 1 (raw tick)
-  lastTradeTimestamp: BigInt # Timestamp of last trade
+  lastTradeTimestamp: BigInt # Timestamp of last trade (any outcome)
+  lastTradeTimestamp_0: BigInt # Timestamp of last outcome 0 trade
+  lastTradeTimestamp_1: BigInt # Timestamp of last outcome 1 trade
+  lastTradeOutcome: Int # Which outcome traded most recently (0 or 1)
   # Resolution
   status: MarketStatus! # Current market status
   resolvedOutcome: Int # Winning outcome index (null if unresolved)

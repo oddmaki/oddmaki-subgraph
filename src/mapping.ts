@@ -945,10 +945,13 @@ export function handleOrderFilled(event: OrderFilled): void {
   // Update market last trade prices (Normal fill = true price discovery)
   if (event.params.outcomeId.equals(BigInt.fromI32(0))) {
     market.lastPriceTick_0 = event.params.priceTick;
+    market.lastTradeTimestamp_0 = event.block.timestamp;
   } else if (event.params.outcomeId.equals(BigInt.fromI32(1))) {
     market.lastPriceTick_1 = event.params.priceTick;
+    market.lastTradeTimestamp_1 = event.block.timestamp;
   }
   market.lastTradeTimestamp = event.block.timestamp;
+  market.lastTradeOutcome = event.params.outcomeId.toI32();
 
   // Update market statistics
   market.totalVolume = market.totalVolume.plus(event.params.qty);
@@ -1130,6 +1133,9 @@ export function handleMintFill(event: MintFill): void {
   market.lastPriceTick_0 = event.params.yesTick;
   market.lastPriceTick_1 = event.params.noTick;
   market.lastTradeTimestamp = event.block.timestamp;
+  market.lastTradeTimestamp_0 = event.block.timestamp;
+  market.lastTradeTimestamp_1 = event.block.timestamp;
+  market.lastTradeOutcome = 0; // Both outcomes traded; convention: report outcome 0
 
   // Update market statistics (count volume once, not per outcome)
   market.totalVolume = market.totalVolume.plus(event.params.qty);
@@ -1477,10 +1483,13 @@ export function handleMarketOrderExecuted(event: MarketOrderExecuted): void {
   if (!tickSize.isZero()) {
     if (event.params.outcomeId.equals(BigInt.fromI32(0))) {
       market.lastPriceTick_0 = priceTick;
+      market.lastTradeTimestamp_0 = event.block.timestamp;
     } else if (event.params.outcomeId.equals(BigInt.fromI32(1))) {
       market.lastPriceTick_1 = priceTick;
+      market.lastTradeTimestamp_1 = event.block.timestamp;
     }
     market.lastTradeTimestamp = event.block.timestamp;
+    market.lastTradeOutcome = event.params.outcomeId.toI32();
   }
 
   // Track unique trader
@@ -1590,10 +1599,13 @@ export function handleMarketSellExecuted(event: MarketSellExecuted): void {
   if (!tickSize.isZero()) {
     if (event.params.outcomeId.equals(BigInt.fromI32(0))) {
       market.lastPriceTick_0 = priceTick;
+      market.lastTradeTimestamp_0 = event.block.timestamp;
     } else if (event.params.outcomeId.equals(BigInt.fromI32(1))) {
       market.lastPriceTick_1 = priceTick;
+      market.lastTradeTimestamp_1 = event.block.timestamp;
     }
     market.lastTradeTimestamp = event.block.timestamp;
+    market.lastTradeOutcome = event.params.outcomeId.toI32();
   }
 
   // Track unique trader
