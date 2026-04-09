@@ -131,6 +131,8 @@ type MarketGroup @entity(immutable: false) {
   # Market tracking
   totalMarkets: BigInt! # FIXED at activation (for conversion math)
   activeMarketCount: BigInt! # Number of active (non-placeholder) markets
+  # UMA reward
+  reward: BigInt! # Total UMA reward for group resolution (venue base + additionalReward)
   # State
   status: MarketStatus! # Draft -> Active -> Resolved
   resolvedMarketId: BigInt! # Which market won (0 = not resolved)
@@ -393,6 +395,9 @@ type Assertion @entity(immutable: false) {
   settled: Boolean! # Whether settled (via optimistic liveness or dispute resolution)
   result: Boolean # Settlement result (true = accepted/truthful, false = rejected)
   disputed: Boolean! # Whether this assertion was disputed
+  # Reward
+  rewardPaid: BigInt # Reward amount paid to asserter (null if not yet paid)
+  rewardRecipient: Bytes # Address that received reward (null if not yet paid)
   # Timestamps
   createdAt: BigInt! # Assertion timestamp
   settledAt: BigInt # Settlement timestamp (after liveness or dispute)

@@ -36,6 +36,7 @@ import {
   AssertionCreated,
   AssertionSettled,
   AssertionDisputed,
+  RewardPaid,
   MarketResolved,
   MarketGroupResolved,
   WrappedCollateralRegistered,
@@ -457,6 +458,9 @@ export function handleMarketGroupCreated(event: MarketGroupCreated): void {
   // Market tracking
   marketGroup.totalMarkets = BigInt.fromI32(0);
   marketGroup.activeMarketCount = BigInt.fromI32(0);
+
+  // UMA reward
+  marketGroup.reward = event.params.reward;
 
   // Initial state
   marketGroup.status = 'Draft';
@@ -1753,6 +1757,28 @@ export function handleAssertionDisputed(event: AssertionDisputed): void {
 
   log.info('Assertion disputed: assertionId={}', [
     assertionId.toHexString(),
+  ]);
+}
+
+export function handleRewardPaid(event: RewardPaid): void {
+  let assertionId = event.params.assertionId;
+  let assertion = Assertion.load(assertionId.toHexString());
+
+  if (assertion == null) {
+    log.warning('Assertion {} not found in RewardPaid event', [
+      assertionId.toHexString(),
+    ]);
+    return;
+  }
+
+  assertion.rewardPaid = event.params.reward;
+  assertion.rewardRecipient = event.params.asserter;
+  assertion.save();
+
+  log.info('Reward paid: assertionId={}, asserter={}, reward={}', [
+    assertionId.toHexString(),
+    event.params.asserter.toHexString(),
+    event.params.reward.toString(),
   ]);
 }
 

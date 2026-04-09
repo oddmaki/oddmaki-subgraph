@@ -61,7 +61,7 @@ dataSources:
           handler: handleMarketCreated
         # Market groups
         - event: MarketGroupCreated(indexed uint256,indexed uint256,indexed
-            address,string,uint256,bytes32[])
+            address,string,uint256,bytes32[],uint256)
           handler: handleMarketGroupCreated
         - event: MarketAddedToGroup(indexed uint256,indexed uint256,string,string)
           handler: handleMarketAddedToGroup
@@ -113,6 +113,8 @@ dataSources:
           handler: handleAssertionSettled
         - event: AssertionDisputed(indexed bytes32)
           handler: handleAssertionDisputed
+        - event: RewardPaid(indexed bytes32,indexed address,uint256)
+          handler: handleRewardPaid
         - event: MarketResolved(indexed uint256,indexed bytes32,string)
           handler: handleMarketResolved
         - event: MarketGroupResolved(indexed uint256,indexed uint256)
