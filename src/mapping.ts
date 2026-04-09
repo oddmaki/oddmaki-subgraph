@@ -52,6 +52,8 @@ import {
   PositionsMerged,
   PriceMarketCreatedPyth,
   PriceMarketResolvedPyth,
+  ProtocolFeeBpsUpdated,
+  OrderAutoCancelled,
 } from '../generated/OddMaki/OddMaki';
 import { ERC20 } from '../generated/OddMaki/ERC20';
 import { PayoutRedemption } from '../generated/ConditionalTokens/ConditionalTokens';
@@ -269,6 +271,12 @@ export function handleVenueFeesUpdated(event: VenueFeesUpdated): void {
   ]);
 }
 
+export function handleProtocolFeeBpsUpdated(
+  event: ProtocolFeeBpsUpdated,
+): void {
+  log.info('Protocol fee updated to {} bps', [event.params.bps.toString()]);
+}
+
 export function handleVenueOracleParamsUpdated(
   event: VenueOracleParamsUpdated,
 ): void {
@@ -365,6 +373,7 @@ export function handleMarketCreated(event: MarketCreated): void {
   market.conditionId = event.params.conditionId;
   market.collateralToken = event.params.collateralToken;
   market.tickSize = event.params.tickSize;
+  market.protocolFeeBps = BigInt.fromI32(0); // Will be set once MarketRegistryData is readable; snapshotted at creation
   market.tags = decodeTags(event.params.tags);
 
   // Reverse lookup: conditionId → marketId (for CTF PayoutRedemption handler)
@@ -804,6 +813,27 @@ export function handleOrderDeleted(event: OrderDeleted): void {
   order.save();
 
   log.info('Order {} deleted', [orderId.toString()]);
+}
+
+export function handleOrderAutoCancelled(event: OrderAutoCancelled): void {
+  let orderId = event.params.orderId;
+  let order = Order.load(orderId.toString());
+
+  if (order == null) {
+    log.warning('Order {} not found in OrderAutoCancelled event', [
+      orderId.toString(),
+    ]);
+    return;
+  }
+
+  order.status = 'Cancelled';
+  order.deleted = true;
+  order.save();
+
+  log.info('Order {} auto-cancelled (buyer-taker, unfunded remainder). Refunded: {}', [
+    orderId.toString(),
+    event.params.refundedCollateral.toString(),
+  ]);
 }
 
 // ============================================

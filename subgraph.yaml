@@ -44,6 +44,8 @@ dataSources:
           handler: handleVenueUnpaused
         - event: VenueFeesUpdated(indexed uint256,uint256,uint256)
           handler: handleVenueFeesUpdated
+        - event: ProtocolFeeBpsUpdated(uint256)
+          handler: handleProtocolFeeBpsUpdated
         - event: VenueOracleParamsUpdated(indexed uint256,uint256,uint256)
           handler: handleVenueOracleParamsUpdated
         - event: VenueAccessControlUpdated(indexed uint256,address,address)
@@ -82,6 +84,8 @@ dataSources:
           handler: handleOrderExpired
         - event: OrderDeleted(indexed uint256)
           handler: handleOrderDeleted
+        - event: OrderAutoCancelled(indexed uint256,uint256)
+          handler: handleOrderAutoCancelled
         # Matching & fills
         - event: OrderFilled(indexed uint256,indexed uint256,indexed
             uint256,uint256,uint256,uint256)

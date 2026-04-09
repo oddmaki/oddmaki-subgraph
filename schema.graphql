@@ -59,6 +59,7 @@ type Market @entity(immutable: false) {
   collateralDecimals: Int # Decimals of collateral token (6 for USDC, 18 for ETH, etc.)
   conditionId: Bytes! # CTF condition ID
   tickSize: BigInt! # Price tick size
+  protocolFeeBps: BigInt! # Protocol fee BPS snapshotted at creation
   # Market Prices (Last Trade Prices)
   lastPriceTick_0: BigInt # Last trade price for outcome 0 (raw tick)
   lastPriceTick_1: BigInt # Last trade price for outcome 1 (raw tick)
