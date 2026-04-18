@@ -28,6 +28,8 @@ See [schema.graphql](./schema.graphql) for the full schema and [QUERIES.md](./QU
 | Base Sepolia | `subgraph.base-sepolia.yaml` | Deployed |
 | Base Mainnet | `subgraph.yaml` | Pending |
 
+See [docs/the-graph-network-deployment.md](./docs/the-graph-network-deployment.md) for the plan to publish to The Graph Network (GRT).
+
 ## Development
 
 ```bash
