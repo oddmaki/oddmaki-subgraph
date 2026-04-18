@@ -29,6 +29,8 @@ dataSources:
         - AccessControlContract
         - MarketAccessControl
         - PriceMarket
+        - OpenMaxStalenessConfig
+        - OpenMaxStalenessUpdate
       abis:
         - name: OddMaki
           file: ./abis/OddMaki.json
@@ -139,6 +141,8 @@ dataSources:
           handler: handlePriceMarketCreatedPyth
         - event: PriceMarketResolvedPyth(indexed uint256,int64,int64,string)
           handler: handlePriceMarketResolvedPyth
+        - event: OpenMaxStalenessUpdated(uint256)
+          handler: handleOpenMaxStalenessUpdated
         # Vault: user-initiated split/merge
         - event: PositionSplit(indexed address,indexed uint256,uint256)
           handler: handlePositionSplit

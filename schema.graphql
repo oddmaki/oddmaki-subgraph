@@ -105,10 +105,30 @@ type PriceMarket @entity(immutable: false) {
   openTime: BigInt!
   closeTime: BigInt!
   resolutionWindow: BigInt!
+  openPriceTime: BigInt! # VAA publishTime when the opening price was captured (0 for strike markets)
   finalPrice: BigInt
   resolved: Boolean!
   outcome: String
   resolvedAt: BigInt
+}
+
+# ============================================
+# Pyth Resolution Config
+# ============================================
+
+type OpenMaxStalenessConfig @entity(immutable: false) {
+  id: ID! # "current"
+  value: BigInt! # Current openMaxStaleness value (seconds; 0 = use built-in default)
+  updatedAt: BigInt!
+  updatedAtBlock: BigInt!
+}
+
+type OpenMaxStalenessUpdate @entity(immutable: true) {
+  id: ID! # tx hash + log index
+  value: BigInt!
+  updatedAt: BigInt!
+  updatedAtBlock: BigInt!
+  tx: Bytes!
 }
 
 enum MarketStatus {

@@ -107,8 +107,10 @@ function mergeFacetAbis(corePath) {
     process.exit(1);
   }
 
-  // Collect all events from all facets, deduplicate by signature
-  const seen = new Map(); // eventSignature -> ABI entry
+  // Collect events and read-only (view/pure) functions from all facets,
+  // deduplicate by signature. View/pure functions are included so subgraph
+  // handlers can make contract reads (e.g., PriceMarketFacet.getPriceMarket).
+  const seen = new Map(); // "type:signature" -> ABI entry
 
   for (const dir of facetDirs) {
     const jsonName = dir.replace('.sol', '.json');
@@ -117,18 +119,26 @@ function mergeFacetAbis(corePath) {
     if (!fs.existsSync(artifactPath)) continue;
 
     const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
-    const events = (artifact.abi || []).filter((entry) => entry.type === 'event');
+    const entries = (artifact.abi || []).filter((entry) =>
+      entry.type === 'event' ||
+      (entry.type === 'function' && (entry.stateMutability === 'view' || entry.stateMutability === 'pure'))
+    );
 
-    for (const event of events) {
-      const sig = `${event.name}(${event.inputs.map((i) => i.type).join(',')})`;
+    for (const entry of entries) {
+      const sig = `${entry.type}:${entry.name}(${entry.inputs.map((i) => i.type).join(',')})`;
       if (!seen.has(sig)) {
-        seen.set(sig, event);
+        seen.set(sig, entry);
       }
     }
   }
 
-  const merged = Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
-  console.log(`  Merged ${merged.length} events from ${facetDirs.length} facets`);
+  const merged = Array.from(seen.values()).sort((a, b) => {
+    if (a.type !== b.type) return a.type.localeCompare(b.type);
+    return a.name.localeCompare(b.name);
+  });
+  const eventCount = merged.filter((e) => e.type === 'event').length;
+  const fnCount = merged.filter((e) => e.type === 'function').length;
+  console.log(`  Merged ${eventCount} events + ${fnCount} view/pure functions from ${facetDirs.length} facets`);
 
   return merged;
 }
