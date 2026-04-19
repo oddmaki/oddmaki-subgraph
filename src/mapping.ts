@@ -54,6 +54,8 @@ import {
   PriceMarketResolvedPyth,
   ProtocolFeeBpsUpdated,
   OrderAutoCancelled,
+  OpenMaxStalenessUpdated,
+  OddMaki,
 } from '../generated/OddMaki/OddMaki';
 import { ERC20 } from '../generated/OddMaki/ERC20';
 import { PayoutRedemption } from '../generated/ConditionalTokens/ConditionalTokens';
@@ -75,6 +77,8 @@ import {
   MarketAccessControl,
   ConditionMarket,
   PriceMarket,
+  OpenMaxStalenessConfig,
+  OpenMaxStalenessUpdate,
 } from '../generated/schema';
 import { getOrCreateUser, getOrCreateProtocol, updateTraderPosition, redeemTraderPosition } from './helpers/entities';
 import { generateId } from './helpers/utils';
@@ -2137,6 +2141,20 @@ export function handlePriceMarketCreatedPyth(event: PriceMarketCreatedPyth): voi
   pm.openTime = event.params.openTime;
   pm.closeTime = event.params.closeTime;
   pm.resolutionWindow = event.params.resolutionWindow;
+
+  // openPriceTime is not in the event; read it from the diamond.
+  // Returns 0 for strike markets (explicit strike, no VAA captured).
+  let diamond = OddMaki.bind(event.address);
+  let pmCall = diamond.try_getPriceMarket(marketId);
+  if (pmCall.reverted) {
+    log.warning('getPriceMarket reverted for market {}, defaulting openPriceTime to 0', [
+      marketId.toString(),
+    ]);
+    pm.openPriceTime = BigInt.zero();
+  } else {
+    pm.openPriceTime = pmCall.value.getOpenPriceTime();
+  }
+
   pm.resolved = false;
   pm.save();
 
@@ -2169,5 +2187,34 @@ export function handlePriceMarketResolvedPyth(event: PriceMarketResolvedPyth): v
     marketId.toString(),
     event.params.finalPrice.toString(),
     event.params.outcome,
+  ]);
+}
+
+export function handleOpenMaxStalenessUpdated(event: OpenMaxStalenessUpdated): void {
+  let value = event.params.openMaxStaleness;
+  let timestamp = event.block.timestamp;
+  let blockNumber = event.block.number;
+
+  let config = OpenMaxStalenessConfig.load('current');
+  if (config == null) {
+    config = new OpenMaxStalenessConfig('current');
+  }
+  config.value = value;
+  config.updatedAt = timestamp;
+  config.updatedAtBlock = blockNumber;
+  config.save();
+
+  let updateId =
+    event.transaction.hash.toHexString() + '-' + event.logIndex.toString();
+  let update = new OpenMaxStalenessUpdate(updateId);
+  update.value = value;
+  update.updatedAt = timestamp;
+  update.updatedAtBlock = blockNumber;
+  update.tx = event.transaction.hash;
+  update.save();
+
+  log.info('OpenMaxStalenessUpdated: value {} at block {}', [
+    value.toString(),
+    blockNumber.toString(),
   ]);
 }
