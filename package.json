@@ -25,7 +25,10 @@
     "clob",
     "oddmaki"
   ],
-  "author": "OddMaki",
+  "author": "Predictable Reality, Inc.",
+  "contributors": [
+    "Carlos Revelo (https://github.com/crevelop)"
+  ],
   "license": "MIT",
   "packageManager": "pnpm@10.13.1",
   "devDependencies": {

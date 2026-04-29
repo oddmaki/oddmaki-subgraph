@@ -70,6 +70,12 @@ pnpm run deploy-base
 - [oddmaki-sdk](https://github.com/oddmaki/oddmaki-sdk) — TypeScript SDK
 - [oddmaki-venue-starter](https://github.com/oddmaki/oddmaki-venue-starter) — Venue starter template
 
+## Links
+
+- **Protocol** — [oddmaki.com](https://oddmaki.com)
+- **Maintainer** — [predictablereality.com](https://predictablereality.com)
+- **Contact** — team@oddmaki.com
+
 ## License
 
-[MIT](./LICENSE)
+[MIT](./LICENSE) — Copyright (c) 2025-2026 Predictable Reality, Inc.
