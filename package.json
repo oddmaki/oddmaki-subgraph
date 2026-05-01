@@ -10,7 +10,7 @@
     "remove-local": "graph remove oddmaki --node http://localhost:8920",
     "deploy-local": "graph deploy oddmaki --version-label v0.0.1 --ipfs http://localhost:5001 --node http://localhost:8920",
     "deploy-base-sepolia": "graph deploy oddmaki --version-label ${VERSION:-v1.1.0} subgraph.base-sepolia.yaml",
-    "deploy-base": "graph deploy oddmaki --version-label ${VERSION:-v1.0.0} subgraph.base.yaml",
+    "deploy-base": "graph deploy oddmaki-base --version-label ${VERSION:-v1.0.0} subgraph.base.yaml",
     "graph-node:up": "docker-compose up -d",
     "graph-node:down": "docker-compose down",
     "graph-node:logs": "docker-compose logs -f graph-node",
