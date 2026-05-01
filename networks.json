@@ -17,10 +17,10 @@
   },
   "base": {
     "OddMaki": {
-      "address": "0x0000000000000000000000000000000000000000"
+      "address": "0x025d086a62d93e24f3cb3f161612ca8e9530127d"
     },
     "ConditionalTokens": {
-      "address": "0x0000000000000000000000000000000000000000"
+      "address": "0x3e2ae408ca03f27849edff32d107c7b8ea5c87b4"
     }
   }
 }
