@@ -11,7 +11,7 @@ on:
           - base-sepolia
           - base
       version:
-        description: "Version label (e.g. v1.2.0). Leave empty to auto-increment patch."
+        description: "Version label (e.g. 1.2.0). Leave empty to auto-increment patch."
         required: false
         type: string
 
@@ -43,31 +43,35 @@ jobs:
           if [ -n "${{ inputs.version }}" ]; then
             VERSION="${{ inputs.version }}"
           else
-            # Find latest tag for this network and bump patch
-            LATEST=$(git tag -l "deploy/${{ inputs.network }}/v*" --sort=-v:refname | head -n1)
+            # Find latest tag for this network and bump patch (matches both new
+            # `deploy/<net>/1.2.3` and legacy `deploy/<net>/v1.2.3` tags).
+            LATEST=$(git tag -l "deploy/${{ inputs.network }}/*" --sort=-v:refname | head -n1)
             if [ -z "$LATEST" ]; then
               # No prior deploy tag — fall back to script defaults
               if [ "${{ inputs.network }}" = "base-sepolia" ]; then
-                VERSION="v1.1.0"
+                VERSION="1.1.0"
               else
-                VERSION="v1.0.0"
+                VERSION="1.0.0"
               fi
             else
-              # Strip prefix: deploy/base-sepolia/v1.2.3 -> 1.2.3
-              SEMVER="${LATEST##*/v}"
+              # Strip path prefix and any legacy leading `v` from the version.
+              SEMVER="${LATEST##*/}"
+              SEMVER="${SEMVER#v}"
               MAJOR="${SEMVER%%.*}"
               REST="${SEMVER#*.}"
               MINOR="${REST%%.*}"
               PATCH="${REST#*.}"
               PATCH=$((PATCH + 1))
-              VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
             fi
           fi
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Deploying **$VERSION** to **${{ inputs.network }}**" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Authenticate with Graph Studio
-        run: graph auth "${{ secrets.GRAPH_DEPLOY_KEY }}"
+        env:
+          GRAPH_DEPLOY_KEY: ${{ secrets.GRAPH_DEPLOY_KEY }}
+        run: pnpm exec graph auth "$GRAPH_DEPLOY_KEY"
 
       - name: Deploy
         run: |
