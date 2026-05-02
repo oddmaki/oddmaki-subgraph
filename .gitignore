@@ -12,6 +12,10 @@ data/
 *.log
 npm-debug.log*
 
+# Dotenv files (allow tracked .env*.example samples)
+.env*
+!.env*.example
+
 # macOS
 .DS_Store
 .claude/settings.json
