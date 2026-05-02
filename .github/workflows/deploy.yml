@@ -11,7 +11,7 @@ on:
           - base-sepolia
           - base
       version:
-        description: "Version label (e.g. 1.2.0). Leave empty to auto-increment patch."
+        description: "Version label (e.g. 1.2.0). Leave empty to use the package.json version."
         required: false
         type: string
 
@@ -21,8 +21,6 @@ jobs:
     environment: ${{ inputs.network }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # need tags for auto-increment
 
       - uses: pnpm/action-setup@v4
 
@@ -43,27 +41,7 @@ jobs:
           if [ -n "${{ inputs.version }}" ]; then
             VERSION="${{ inputs.version }}"
           else
-            # Find latest tag for this network and bump patch (matches both new
-            # `deploy/<net>/1.2.3` and legacy `deploy/<net>/v1.2.3` tags).
-            LATEST=$(git tag -l "deploy/${{ inputs.network }}/*" --sort=-v:refname | head -n1)
-            if [ -z "$LATEST" ]; then
-              # No prior deploy tag — fall back to script defaults
-              if [ "${{ inputs.network }}" = "base-sepolia" ]; then
-                VERSION="1.1.0"
-              else
-                VERSION="1.0.0"
-              fi
-            else
-              # Strip path prefix and any legacy leading `v` from the version.
-              SEMVER="${LATEST##*/}"
-              SEMVER="${SEMVER#v}"
-              MAJOR="${SEMVER%%.*}"
-              REST="${SEMVER#*.}"
-              MINOR="${REST%%.*}"
-              PATCH="${REST#*.}"
-              PATCH=$((PATCH + 1))
-              VERSION="${MAJOR}.${MINOR}.${PATCH}"
-            fi
+            VERSION=$(node -p "require('./package.json').version")
           fi
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Deploying **$VERSION** to **${{ inputs.network }}**" >> "$GITHUB_STEP_SUMMARY"
@@ -76,8 +54,3 @@ jobs:
       - name: Deploy
         run: |
           VERSION=${{ steps.version.outputs.value }} pnpm deploy-${{ inputs.network }}
-
-      - name: Tag deployment
-        run: |
-          git tag "deploy/${{ inputs.network }}/${{ steps.version.outputs.value }}"
-          git push origin "deploy/${{ inputs.network }}/${{ steps.version.outputs.value }}"
