@@ -13,6 +13,7 @@ type Venue @entity(immutable: false) {
   # Fee configuration
   venueFeeBps: BigInt! # Venue fee in basis points
   creatorFeeBps: BigInt! # Creator fee in basis points
+  marketCreationFee: BigInt! # Upfront fee charged on createMarket, in collateral units. May be 0.
   # Oracle configuration
   umaRewardAmount: BigInt! # UMA assertion reward
   umaMinBond: BigInt! # UMA minimum bond
