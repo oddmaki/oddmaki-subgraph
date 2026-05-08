@@ -41,6 +41,7 @@ import {
   MarketGroupResolved,
   WrappedCollateralRegistered,
   VenueAccessControlUpdated,
+  VenueMarketCreationFeeUpdated,
   AccessControlDeployed,
   MarketTradingAccessControlSet,
   MarketTradingAccessControlRemoved,
@@ -154,9 +155,23 @@ export function handleVenueCreated(event: VenueCreated): void {
   venue.name = event.params.name;
   venue.metadata = event.params.metadata;
 
-  // Initialize fee configuration (will be set via VenueFeesUpdated event)
+  // Initialize fee configuration (will be set via VenueFeesUpdated event, fired in same tx)
   venue.venueFeeBps = BigInt.fromI32(0);
   venue.creatorFeeBps = BigInt.fromI32(0);
+
+  // marketCreationFee is set at creation but no event carries it. Read it directly
+  // from storage via the Diamond. Falls back to 0 if the call reverts (shouldn't, but
+  // defensive — the Diamond is the same address that emitted the event).
+  let diamond = OddMaki.bind(event.address);
+  let venueResult = diamond.try_getVenue(venueId);
+  if (!venueResult.reverted) {
+    venue.marketCreationFee = venueResult.value.marketCreationFee;
+  } else {
+    venue.marketCreationFee = BigInt.fromI32(0);
+    log.warning('getVenue reverted while initializing marketCreationFee for venue {}', [
+      venueId.toString(),
+    ]);
+  }
 
   // Initialize oracle configuration (will be set via VenueOracleParamsUpdated event)
   venue.umaRewardAmount = BigInt.fromI32(0);
@@ -303,6 +318,29 @@ export function handleVenueOracleParamsUpdated(
     venueId.toString(),
     event.params.umaRewardAmount.toString(),
     event.params.umaMinBond.toString(),
+  ]);
+}
+
+export function handleVenueMarketCreationFeeUpdated(
+  event: VenueMarketCreationFeeUpdated,
+): void {
+  let venueId = event.params.venueId;
+  let venue = Venue.load(venueId.toString());
+
+  if (venue == null) {
+    log.warning('Venue {} not found in VenueMarketCreationFeeUpdated event', [
+      venueId.toString(),
+    ]);
+    return;
+  }
+
+  venue.marketCreationFee = event.params.newFee;
+  venue.updatedAt = event.block.timestamp;
+  venue.save();
+
+  log.info('Venue {} market creation fee updated: {}', [
+    venueId.toString(),
+    event.params.newFee.toString(),
   ]);
 }
 

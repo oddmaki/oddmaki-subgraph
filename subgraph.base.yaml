@@ -52,6 +52,8 @@ dataSources:
           handler: handleVenueOracleParamsUpdated
         - event: VenueAccessControlUpdated(indexed uint256,address,address)
           handler: handleVenueAccessControlUpdated
+        - event: VenueMarketCreationFeeUpdated(indexed uint256,uint256)
+          handler: handleVenueMarketCreationFeeUpdated
         # Access control
         - event: AccessControlDeployed(indexed address,indexed address,string)
           handler: handleAccessControlDeployed
