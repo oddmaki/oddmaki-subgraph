@@ -147,6 +147,28 @@ For very high-cardinality search use cases (millions of markets), prefer adding
 a `@fulltext` directive to the schema; for typical venue-scoped operator
 dashboards `_contains_nocase` is sufficient.
 
+### Filter Markets by Status
+Use `status_in` to constrain by one or more lifecycle states. Pass the full
+list of statuses to disable the filter without rewriting the query.
+
+```graphql
+query MarketsByStatus(
+  $venueId: BigInt
+  $statuses: [MarketStatus!] = [Draft, Active, Resolved, Invalid]
+) {
+  markets(
+    where: { venue_: { venueId: $venueId }, status_in: $statuses }
+    first: 50
+    orderBy: createdAt
+    orderDirection: desc
+  ) {
+    id
+    question
+    status
+  }
+}
+```
+
 ### Filter Orders by Trader
 See all orders placed by a specific address.
 
