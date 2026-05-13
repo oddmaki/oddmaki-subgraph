@@ -78,6 +78,7 @@ import {
   MarketAccessControl,
   ConditionMarket,
   PriceMarket,
+  PriceMarketSeries,
   OpenMaxStalenessConfig,
   OpenMaxStalenessUpdate,
 } from '../generated/schema';
@@ -140,6 +141,208 @@ function decodeTags(tags: Bytes[]): string[] {
     }
   }
   return result;
+}
+
+// ============================================
+// Price Market Series helpers
+// ============================================
+
+const PRICE_MARKET_TAG = 'price-market';
+const SERIES_TAG_PREFIX = 'series:';
+
+/**
+ * Extract the series key from a tag set. Returns the seriesKey (without prefix)
+ * iff the tags contain both "price-market" and a "series:<key>" tag, else null.
+ */
+function extractSeriesKey(tags: string[]): string | null {
+  let hasPriceMarketTag = false;
+  let seriesKey: string | null = null;
+  for (let i = 0; i < tags.length; i++) {
+    let t = tags[i];
+    if (t == PRICE_MARKET_TAG) {
+      hasPriceMarketTag = true;
+    } else if (t.length > SERIES_TAG_PREFIX.length && t.startsWith(SERIES_TAG_PREFIX)) {
+      seriesKey = t.substr(SERIES_TAG_PREFIX.length);
+    }
+  }
+  if (!hasPriceMarketTag) return null;
+  return seriesKey;
+}
+
+/**
+ * Parse interval string like "5m", "15m", "1h", "4h", "1d" to seconds.
+ * Returns BigInt.zero() if unparseable.
+ */
+function parseIntervalToSeconds(interval: string): BigInt {
+  if (interval.length < 2) return BigInt.zero();
+  let unit = interval.charAt(interval.length - 1);
+  let numStr = interval.substr(0, interval.length - 1);
+  // Verify numStr is all digits before BigInt.fromString (which traps on garbage input).
+  for (let i = 0; i < numStr.length; i++) {
+    let c = numStr.charCodeAt(i);
+    if (c < 48 || c > 57) return BigInt.zero();
+  }
+  let n = BigInt.fromString(numStr);
+  if (unit == 'm') return n.times(BigInt.fromI32(60));
+  if (unit == 'h') return n.times(BigInt.fromI32(3600));
+  if (unit == 'd') return n.times(BigInt.fromI32(86400));
+  if (unit == 's') return n;
+  return BigInt.zero();
+}
+
+/**
+ * Compose the entity id for a PriceMarketSeries — venue-scoped so the same
+ * seriesKey on different venues is treated as independent series.
+ */
+function seriesEntityId(venueId: string, seriesKey: string): string {
+  return venueId + '-' + seriesKey;
+}
+
+/**
+ * Get or create a PriceMarketSeries entity, parsing seriesKey "<asset>-<kind>-<interval>".
+ */
+function getOrCreatePriceMarketSeries(
+  venueId: string,
+  seriesKey: string,
+  timestamp: BigInt,
+): PriceMarketSeries {
+  let entityId = seriesEntityId(venueId, seriesKey);
+  let series = PriceMarketSeries.load(entityId);
+  if (series != null) return series;
+
+  series = new PriceMarketSeries(entityId);
+  series.seriesKey = seriesKey;
+  series.venue = venueId;
+  // Parse "asset-kind-interval" — split on '-', take first/second/last so multi-token
+  // assets are still safe (e.g. "wbtc-updown-5m"). Anything weird becomes empty.
+  let parts = seriesKey.split('-');
+  if (parts.length >= 3) {
+    series.asset = parts[0];
+    series.kind = parts[1];
+    series.interval = parts[parts.length - 1];
+  } else {
+    series.asset = '';
+    series.kind = '';
+    series.interval = '';
+  }
+  series.intervalSeconds = parseIntervalToSeconds(series.interval);
+  series.status = 'Active';
+  series.tags = [];
+  series.marketIds = [];
+  series.createdAt = timestamp;
+  series.updatedAt = timestamp;
+  series.save();
+  return series;
+}
+
+/**
+ * Find the next-to-resolve unresolved market in a series (smallest closeTime among
+ * markets with status != Resolved/Invalid). Returns the market id or null.
+ */
+function findNextCurrentMarket(series: PriceMarketSeries): string | null {
+  let bestId: string | null = null;
+  let bestCloseTime: BigInt = BigInt.zero();
+  let marketIds = series.marketIds;
+  for (let i = 0; i < marketIds.length; i++) {
+    let mId = marketIds[i];
+    let m = Market.load(mId);
+    if (m == null) continue;
+    if (m.status == 'Resolved' || m.status == 'Invalid') continue;
+    let pm = PriceMarket.load(mId);
+    if (pm == null) continue;
+    if (bestId == null || pm.closeTime.lt(bestCloseTime)) {
+      bestId = mId;
+      bestCloseTime = pm.closeTime;
+    }
+  }
+  return bestId;
+}
+
+/**
+ * Recompute series.currentMarket, series.tags, and series.status based on member markets.
+ * Call after any change that could affect which market is current (creation, tag change,
+ * resolution).
+ */
+function refreshSeriesCurrent(series: PriceMarketSeries, timestamp: BigInt): void {
+  let nextId = findNextCurrentMarket(series);
+  if (nextId == null) {
+    series.currentMarket = null;
+    series.status = 'Resolved';
+    // Leave tags as-is — last current's tags are the most recent filterable set
+  } else {
+    let nextIdStr = nextId as string;
+    series.currentMarket = nextIdStr;
+    series.status = 'Active';
+    let current = Market.load(nextIdStr);
+    if (current != null) series.tags = current.tags;
+  }
+  series.updatedAt = timestamp;
+  series.save();
+}
+
+/**
+ * Reconcile a market's membership in a PriceMarketSeries based on its current tags.
+ * Handles: first attachment, series-key change, detachment. Updates marketIds on both
+ * old and new series and refreshes currentMarket on whichever changed.
+ */
+function reconcileMarketSeries(market: Market, timestamp: BigInt): void {
+  let newSeriesKey = extractSeriesKey(market.tags);
+  let newEntityId: string | null = null;
+  if (newSeriesKey != null) {
+    newEntityId = seriesEntityId(market.venue, newSeriesKey as string);
+  }
+  let oldEntityId = market.priceSeries;
+
+  if (newEntityId == oldEntityId) {
+    // No membership change. Still refresh tags on current series if this is its current market.
+    if (newEntityId != null) {
+      let series = PriceMarketSeries.load(newEntityId as string);
+      if (series != null && series.currentMarket == market.id) {
+        series.tags = market.tags;
+        series.updatedAt = timestamp;
+        series.save();
+      }
+    }
+    return;
+  }
+
+  // Detach from old series
+  if (oldEntityId != null) {
+    let oldSeries = PriceMarketSeries.load(oldEntityId as string);
+    if (oldSeries != null) {
+      let ids = oldSeries.marketIds;
+      let filtered: string[] = [];
+      for (let i = 0; i < ids.length; i++) {
+        if (ids[i] != market.id) filtered.push(ids[i]);
+      }
+      oldSeries.marketIds = filtered;
+      refreshSeriesCurrent(oldSeries, timestamp);
+    }
+    market.priceSeries = null;
+  }
+
+  // Attach to new series
+  if (newSeriesKey != null) {
+    let newSeries = getOrCreatePriceMarketSeries(
+      market.venue,
+      newSeriesKey as string,
+      timestamp,
+    );
+    let ids = newSeries.marketIds;
+    let exists = false;
+    for (let i = 0; i < ids.length; i++) {
+      if (ids[i] == market.id) {
+        exists = true;
+        break;
+      }
+    }
+    if (!exists) {
+      ids.push(market.id);
+      newSeries.marketIds = ids;
+    }
+    market.priceSeries = newSeries.id;
+    refreshSeriesCurrent(newSeries, timestamp);
+  }
 }
 
 // ============================================
@@ -447,6 +650,11 @@ export function handleMarketCreated(event: MarketCreated): void {
   }
 
   market.save();
+
+  // Attach to price market series if tags indicate one. The series' currentMarket
+  // pointer is only fully resolvable after PriceMarketCreatedPyth fires (which sets
+  // closeTime), so we just register membership here and let that handler refresh.
+  reconcileMarketSeries(market, event.block.timestamp);
 
   // Update venue statistics
   venue.totalMarkets = venue.totalMarkets.plus(BigInt.fromI32(1));
@@ -1895,6 +2103,14 @@ export function handleMarketResolved(event: MarketResolved): void {
     }
   }
 
+  // Rotate the price market series' current pointer if this market was its current.
+  if (market.priceSeries != null) {
+    let series = PriceMarketSeries.load(market.priceSeries as string);
+    if (series != null) {
+      refreshSeriesCurrent(series, event.block.timestamp);
+    }
+  }
+
   log.info('Market {} resolved: outcome={}', [
     marketId.toString(),
     event.params.outcome,
@@ -1955,6 +2171,9 @@ export function handleMarketTagsUpdated(event: MarketTagsUpdated): void {
 
   market.tags = decodeTags(event.params.tags);
   market.save();
+
+  // Reconcile series membership in case the series tag was added, changed, or removed.
+  reconcileMarketSeries(market, event.block.timestamp);
 
   log.info('Market {} tags updated', [marketId.toString()]);
 }
@@ -2198,6 +2417,16 @@ export function handlePriceMarketCreatedPyth(event: PriceMarketCreatedPyth): voi
 
   market.priceMarket = pm.id;
   market.save();
+
+  // Now that closeTime is set, recompute the series' currentMarket if this market
+  // belongs to one. MarketCreated already registered membership; this is the first
+  // moment we can correctly order by closeTime.
+  if (market.priceSeries != null) {
+    let series = PriceMarketSeries.load(market.priceSeries as string);
+    if (series != null) {
+      refreshSeriesCurrent(series, event.block.timestamp);
+    }
+  }
 
   log.info('PriceMarketCreatedPyth: market {} feed {} strikePrice {} closeTime {}', [
     marketId.toString(),

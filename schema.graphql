@@ -91,6 +91,7 @@ type Market @entity(immutable: false) {
   # Price Market
   isPriceMarket: Boolean! # True if this is a Pyth price market
   priceMarket: PriceMarket # Pyth price market overlay (null if not a price market)
+  priceSeries: PriceMarketSeries # Series this market belongs to (null unless tagged "price-market" + "series:<key>")
   # Timestamps
   createdAt: BigInt! # Block timestamp
   createdAtBlock: BigInt! # Block number
@@ -111,6 +112,27 @@ type PriceMarket @entity(immutable: false) {
   resolved: Boolean!
   outcome: String
   resolvedAt: BigInt
+}
+
+# ============================================
+# Price Market Series (group of related price markets, e.g. all "btc-updown-5m" windows)
+# ============================================
+
+type PriceMarketSeries @entity(immutable: false) {
+  id: ID! # Composite "<venueId>-<seriesKey>", e.g. "1-btc-updown-5m"
+  seriesKey: String! # "btc-updown-5m" (used for UI lookups)
+  venue: Venue! # Series are venue-scoped — same seriesKey on different venues = independent series
+  asset: String! # "btc" (parsed from seriesKey)
+  kind: String! # "updown" (parsed from seriesKey)
+  interval: String! # "5m" (parsed from seriesKey)
+  intervalSeconds: BigInt! # 300 (parsed interval in seconds; 0 if unparseable)
+  currentMarket: Market # Next-to-resolve unresolved market in the series
+  status: MarketStatus! # Derived from currentMarket (Active while any unresolved, Resolved otherwise)
+  tags: [String!]! # Tags from the currentMarket (so filter tags like "crypto" surface)
+  marketIds: [String!]! # Stored array of market IDs in this series (for handler iteration)
+  createdAt: BigInt! # Block timestamp when series was first seen
+  updatedAt: BigInt! # Last update timestamp
+  markets: [Market!]! @derivedFrom(field: "priceSeries")
 }
 
 # ============================================
