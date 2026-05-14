@@ -343,6 +343,11 @@ function reconcileMarketSeries(market: Market, timestamp: BigInt): void {
     market.priceSeries = newSeries.id;
     refreshSeriesCurrent(newSeries, timestamp);
   }
+
+  // Persist the market's priceSeries back-pointer (the calling handler already
+  // did its own market.save() before invoking reconcile, so we need to commit
+  // the membership change explicitly).
+  market.save();
 }
 
 // ============================================
