@@ -78,7 +78,7 @@ import {
   MarketAccessControl,
   ConditionMarket,
   PriceMarket,
-  PriceMarketSeries,
+  PriceMarketSerie,
   OpenMaxStalenessConfig,
   OpenMaxStalenessUpdate,
 } from '../generated/schema';
@@ -191,7 +191,7 @@ function parseIntervalToSeconds(interval: string): BigInt {
 }
 
 /**
- * Compose the entity id for a PriceMarketSeries — venue-scoped so the same
+ * Compose the entity id for a PriceMarketSerie — venue-scoped so the same
  * seriesKey on different venues is treated as independent series.
  */
 function seriesEntityId(venueId: string, seriesKey: string): string {
@@ -199,18 +199,18 @@ function seriesEntityId(venueId: string, seriesKey: string): string {
 }
 
 /**
- * Get or create a PriceMarketSeries entity, parsing seriesKey "<asset>-<kind>-<interval>".
+ * Get or create a PriceMarketSerie entity, parsing seriesKey "<asset>-<kind>-<interval>".
  */
-function getOrCreatePriceMarketSeries(
+function getOrCreatePriceMarketSerie(
   venueId: string,
   seriesKey: string,
   timestamp: BigInt,
-): PriceMarketSeries {
+): PriceMarketSerie {
   let entityId = seriesEntityId(venueId, seriesKey);
-  let series = PriceMarketSeries.load(entityId);
+  let series = PriceMarketSerie.load(entityId);
   if (series != null) return series;
 
-  series = new PriceMarketSeries(entityId);
+  series = new PriceMarketSerie(entityId);
   series.seriesKey = seriesKey;
   series.venue = venueId;
   // Parse "asset-kind-interval" — split on '-', take first/second/last so multi-token
@@ -239,7 +239,7 @@ function getOrCreatePriceMarketSeries(
  * Find the next-to-resolve unresolved market in a series (smallest closeTime among
  * markets with status != Resolved/Invalid). Returns the market id or null.
  */
-function findNextCurrentMarket(series: PriceMarketSeries): string | null {
+function findNextCurrentMarket(series: PriceMarketSerie): string | null {
   let bestId: string | null = null;
   let bestCloseTime: BigInt = BigInt.zero();
   let marketIds = series.marketIds;
@@ -263,7 +263,7 @@ function findNextCurrentMarket(series: PriceMarketSeries): string | null {
  * Call after any change that could affect which market is current (creation, tag change,
  * resolution).
  */
-function refreshSeriesCurrent(series: PriceMarketSeries, timestamp: BigInt): void {
+function refreshSeriesCurrent(series: PriceMarketSerie, timestamp: BigInt): void {
   let nextId = findNextCurrentMarket(series);
   if (nextId == null) {
     series.currentMarket = null;
@@ -281,7 +281,7 @@ function refreshSeriesCurrent(series: PriceMarketSeries, timestamp: BigInt): voi
 }
 
 /**
- * Reconcile a market's membership in a PriceMarketSeries based on its current tags.
+ * Reconcile a market's membership in a PriceMarketSerie based on its current tags.
  * Handles: first attachment, series-key change, detachment. Updates marketIds on both
  * old and new series and refreshes currentMarket on whichever changed.
  */
@@ -296,7 +296,7 @@ function reconcileMarketSeries(market: Market, timestamp: BigInt): void {
   if (newEntityId == oldEntityId) {
     // No membership change. Still refresh tags on current series if this is its current market.
     if (newEntityId != null) {
-      let series = PriceMarketSeries.load(newEntityId as string);
+      let series = PriceMarketSerie.load(newEntityId as string);
       if (series != null && series.currentMarket == market.id) {
         series.tags = market.tags;
         series.updatedAt = timestamp;
@@ -308,7 +308,7 @@ function reconcileMarketSeries(market: Market, timestamp: BigInt): void {
 
   // Detach from old series
   if (oldEntityId != null) {
-    let oldSeries = PriceMarketSeries.load(oldEntityId as string);
+    let oldSeries = PriceMarketSerie.load(oldEntityId as string);
     if (oldSeries != null) {
       let ids = oldSeries.marketIds;
       let filtered: string[] = [];
@@ -323,7 +323,7 @@ function reconcileMarketSeries(market: Market, timestamp: BigInt): void {
 
   // Attach to new series
   if (newSeriesKey != null) {
-    let newSeries = getOrCreatePriceMarketSeries(
+    let newSeries = getOrCreatePriceMarketSerie(
       market.venue,
       newSeriesKey as string,
       timestamp,
@@ -2105,7 +2105,7 @@ export function handleMarketResolved(event: MarketResolved): void {
 
   // Rotate the price market series' current pointer if this market was its current.
   if (market.priceSeries != null) {
-    let series = PriceMarketSeries.load(market.priceSeries as string);
+    let series = PriceMarketSerie.load(market.priceSeries as string);
     if (series != null) {
       refreshSeriesCurrent(series, event.block.timestamp);
     }
@@ -2422,7 +2422,7 @@ export function handlePriceMarketCreatedPyth(event: PriceMarketCreatedPyth): voi
   // belongs to one. MarketCreated already registered membership; this is the first
   // moment we can correctly order by closeTime.
   if (market.priceSeries != null) {
-    let series = PriceMarketSeries.load(market.priceSeries as string);
+    let series = PriceMarketSerie.load(market.priceSeries as string);
     if (series != null) {
       refreshSeriesCurrent(series, event.block.timestamp);
     }
