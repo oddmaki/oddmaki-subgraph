@@ -102,12 +102,25 @@ type PriceMarket @entity(immutable: false) {
   market: Market!
   provider: String! # "pyth"
   feedId: Bytes!
-  strikePrice: BigInt! # Reference price: captured open price (Up/Down) or explicit target (strike)
+  # Reference price for resolution.
+  # - Explicit-strike markets: set at creation, never changes.
+  # - Deferred Up/Down markets: 0 at creation, populated at resolution with the
+  #   open price captured from the earliest Hermes VAA in
+  #   [openTime, openTime + resolutionWindow]. Clients can project the value
+  #   before resolution via the SDK's fetchProjectedOpenPrice() helper.
+  strikePrice: BigInt!
   priceExpo: Int!
   openTime: BigInt!
   closeTime: BigInt!
   resolutionWindow: BigInt!
-  openPriceTime: BigInt! # VAA publishTime when the opening price was captured (0 for strike markets)
+  # VAA publishTime of the captured open price (seconds since epoch).
+  # - Explicit-strike markets: always 0 (no open price is captured).
+  # - Deferred Up/Down markets: 0 until resolution, then the open VAA's publishTime.
+  openPriceTime: BigInt!
+  # `true` while the market awaits both trading and on-chain strike capture.
+  # Flips to `false` once `strikePrice` is populated (always for explicit-strike;
+  # at resolution for deferred). UI uses this to render a "strike pending" badge.
+  isStrikeDeferred: Boolean!
   finalPrice: BigInt
   resolved: Boolean!
   outcome: String
@@ -133,25 +146,6 @@ type PriceMarketSerie @entity(immutable: false) {
   createdAt: BigInt! # Block timestamp when series was first seen
   updatedAt: BigInt! # Last update timestamp
   markets: [Market!]! @derivedFrom(field: "priceSeries")
-}
-
-# ============================================
-# Pyth Resolution Config
-# ============================================
-
-type OpenMaxStalenessConfig @entity(immutable: false) {
-  id: ID! # "current"
-  value: BigInt! # Current openMaxStaleness value (seconds; 0 = use built-in default)
-  updatedAt: BigInt!
-  updatedAtBlock: BigInt!
-}
-
-type OpenMaxStalenessUpdate @entity(immutable: true) {
-  id: ID! # tx hash + log index
-  value: BigInt!
-  updatedAt: BigInt!
-  updatedAtBlock: BigInt!
-  tx: Bytes!
 }
 
 enum MarketStatus {

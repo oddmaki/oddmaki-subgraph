@@ -55,7 +55,6 @@ import {
   PriceMarketResolvedPyth,
   ProtocolFeeBpsUpdated,
   OrderAutoCancelled,
-  OpenMaxStalenessUpdated,
   OddMaki,
 } from '../generated/OddMaki/OddMaki';
 import { ERC20 } from '../generated/OddMaki/ERC20';
@@ -79,8 +78,6 @@ import {
   ConditionMarket,
   PriceMarket,
   PriceMarketSerie,
-  OpenMaxStalenessConfig,
-  OpenMaxStalenessUpdate,
 } from '../generated/schema';
 import { getOrCreateUser, getOrCreateProtocol, updateTraderPosition, redeemTraderPosition } from './helpers/entities';
 import { generateId } from './helpers/utils';
@@ -2393,7 +2390,11 @@ export function handlePriceMarketCreatedPyth(event: PriceMarketCreatedPyth): voi
   // Flag market as price market
   market.isPriceMarket = true;
 
-  // Create PriceMarket overlay entity
+  // Create PriceMarket overlay entity. `strikePrice` may be 0 for deferred Up/Down
+  // markets — the on-chain strike is captured at resolution time from a Hermes
+  // VAA. Clients can project it before resolution via the SDK's
+  // `fetchProjectedOpenPrice()` helper, which queries Hermes the same way the
+  // contract will at resolution.
   let pm = new PriceMarket(marketId.toString());
   pm.market = marketId.toString();
   pm.provider = 'pyth';
@@ -2403,20 +2404,13 @@ export function handlePriceMarketCreatedPyth(event: PriceMarketCreatedPyth): voi
   pm.openTime = event.params.openTime;
   pm.closeTime = event.params.closeTime;
   pm.resolutionWindow = event.params.resolutionWindow;
-
-  // openPriceTime is not in the event; read it from the diamond.
-  // Returns 0 for strike markets (explicit strike, no VAA captured).
-  let diamond = OddMaki.bind(event.address);
-  let pmCall = diamond.try_getPriceMarket(marketId);
-  if (pmCall.reverted) {
-    log.warning('getPriceMarket reverted for market {}, defaulting openPriceTime to 0', [
-      marketId.toString(),
-    ]);
-    pm.openPriceTime = BigInt.zero();
-  } else {
-    pm.openPriceTime = pmCall.value.getOpenPriceTime();
-  }
-
+  // openPriceTime is always 0 at creation. Explicit-strike markets keep it 0
+  // forever (no VAA captured); deferred Up/Down markets get it populated when
+  // the resolver calls resolvePriceMarketPyth and the event fires below.
+  pm.openPriceTime = BigInt.zero();
+  // Flag for UI: render "strike pending" treatment while strikePrice is unset.
+  // Always true for deferred markets at creation; false for explicit-strike.
+  pm.isStrikeDeferred = event.params.strikePrice.equals(BigInt.zero());
   pm.resolved = false;
   pm.save();
 
@@ -2450,43 +2444,24 @@ export function handlePriceMarketResolvedPyth(event: PriceMarketResolvedPyth): v
   }
 
   pm.finalPrice = event.params.finalPrice;
+  // Backfill the strike for deferred markets (was 0 at creation, populated at
+  // resolution from the captured open VAA). For explicit-strike markets the
+  // event simply re-emits the same strikePrice that's already stored — write
+  // is idempotent.
+  pm.strikePrice = event.params.strikePrice;
+  pm.openPriceTime = event.params.openPriceTime;
   pm.outcome = event.params.outcome;
   pm.resolved = true;
   pm.resolvedAt = event.block.timestamp;
+  // Strike is now on chain; clear the "pending" flag for the UI.
+  pm.isStrikeDeferred = false;
   pm.save();
 
-  log.info('PriceMarketResolvedPyth: market {} finalPrice {} outcome {}', [
+  log.info('PriceMarketResolvedPyth: market {} strikePrice {} finalPrice {} outcome {}', [
     marketId.toString(),
+    event.params.strikePrice.toString(),
     event.params.finalPrice.toString(),
     event.params.outcome,
   ]);
 }
 
-export function handleOpenMaxStalenessUpdated(event: OpenMaxStalenessUpdated): void {
-  let value = event.params.openMaxStaleness;
-  let timestamp = event.block.timestamp;
-  let blockNumber = event.block.number;
-
-  let config = OpenMaxStalenessConfig.load('current');
-  if (config == null) {
-    config = new OpenMaxStalenessConfig('current');
-  }
-  config.value = value;
-  config.updatedAt = timestamp;
-  config.updatedAtBlock = blockNumber;
-  config.save();
-
-  let updateId =
-    event.transaction.hash.toHexString() + '-' + event.logIndex.toString();
-  let update = new OpenMaxStalenessUpdate(updateId);
-  update.value = value;
-  update.updatedAt = timestamp;
-  update.updatedAtBlock = blockNumber;
-  update.tx = event.transaction.hash;
-  update.save();
-
-  log.info('OpenMaxStalenessUpdated: value {} at block {}', [
-    value.toString(),
-    blockNumber.toString(),
-  ]);
-}

@@ -845,19 +845,6 @@
   },
   {
     "type": "event",
-    "name": "OpenMaxStalenessUpdated",
-    "inputs": [
-      {
-        "name": "openMaxStaleness",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "OrderAutoCancelled",
     "inputs": [
       {
@@ -1231,6 +1218,25 @@
   },
   {
     "type": "event",
+    "name": "PriceMarketInvalidated",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "PriceMarketResolvedPyth",
     "inputs": [
       {
@@ -1250,6 +1256,12 @@
         "type": "int64",
         "indexed": false,
         "internalType": "int64"
+      },
+      {
+        "name": "openPriceTime",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       },
       {
         "name": "outcome",
@@ -2593,19 +2605,6 @@
   {
     "type": "function",
     "name": "getNextVenueId",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getOpenMaxStaleness",
     "inputs": [],
     "outputs": [
       {
