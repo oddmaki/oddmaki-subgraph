@@ -1,5 +1,5 @@
 /**
- * Octopus Protocol — Unified Diamond Mapping
+ * OddMaki Protocol — Unified Diamond Mapping
  *
  * Single mapping file for the Diamond proxy. All events from all facets
  * are emitted from one address and handled here.

@@ -48,7 +48,7 @@ pnpm run graph-node:up
 pnpm run codegen && pnpm run build
 pnpm run create-local && pnpm run deploy-local
 
-# Query at http://localhost:8900/subgraphs/name/octopus-core/graphql
+# Query at http://localhost:8900/subgraphs/name/oddmaki/graphql
 ```
 
 ### Deploy to The Graph Studio
