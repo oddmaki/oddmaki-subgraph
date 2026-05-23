@@ -314,6 +314,7 @@ type Trade @entity(immutable: true) {
 type Fill @entity(immutable: true) {
   id: ID! # tx-logIndex-buy/sell (OrderFill), tx-logIndex-0/1 (MintFill/MergeFill), tx-logIndex (MarketOrder)
   market: Market!
+  venue: Venue! # Denormalized for venue-scoped fill queries (The Graph can't filter on 2-level nested entity references)
   outcome: BigInt!
   side: OrderSide!
   tick: BigInt!

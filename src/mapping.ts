@@ -1158,6 +1158,7 @@ export function handleOrderFilled(event: OrderFilled): void {
 
   let buyFill = new Fill(buyFillId);
   buyFill.market = marketId.toString();
+  buyFill.venue = market.venue;
   buyFill.outcome = event.params.outcomeId;
   buyFill.side = 'BUY';
   buyFill.tick = event.params.priceTick;
@@ -1179,6 +1180,7 @@ export function handleOrderFilled(event: OrderFilled): void {
 
   let sellFill = new Fill(sellFillId);
   sellFill.market = marketId.toString();
+  sellFill.venue = market.venue;
   sellFill.outcome = event.params.outcomeId;
   sellFill.side = 'SELL';
   sellFill.tick = event.params.priceTick;
@@ -1359,6 +1361,7 @@ export function handleMintFill(event: MintFill): void {
 
   let yesFill = new Fill(yesFillId);
   yesFill.market = marketId.toString();
+  yesFill.venue = market.venue;
   yesFill.outcome = BigInt.fromI32(0);
   yesFill.side = 'BUY';
   yesFill.tick = event.params.yesTick;
@@ -1380,6 +1383,7 @@ export function handleMintFill(event: MintFill): void {
 
   let noFill = new Fill(noFillId);
   noFill.market = marketId.toString();
+  noFill.venue = market.venue;
   noFill.outcome = BigInt.fromI32(1);
   noFill.side = 'BUY';
   noFill.tick = event.params.noTick;
@@ -1513,6 +1517,7 @@ export function handleMergeFill(event: MergeFill): void {
 
   let yesFill = new Fill(yesFillId);
   yesFill.market = marketId.toString();
+  yesFill.venue = market.venue;
   yesFill.outcome = BigInt.fromI32(0);
   yesFill.side = 'SELL';
   yesFill.tick = event.params.yesTick;
@@ -1534,6 +1539,7 @@ export function handleMergeFill(event: MergeFill): void {
 
   let noFill = new Fill(noFillId);
   noFill.market = marketId.toString();
+  noFill.venue = market.venue;
   noFill.outcome = BigInt.fromI32(1);
   noFill.side = 'SELL';
   noFill.tick = event.params.noTick;
@@ -1795,6 +1801,7 @@ export function handleMarketOrderExecuted(event: MarketOrderExecuted): void {
   // Create per-participant Fill entity
   let fill = new Fill(baseId);
   fill.market = marketId.toString();
+  fill.venue = market.venue;
   fill.outcome = event.params.outcomeId;
   fill.side = 'BUY';
   fill.tick = priceTick;
@@ -1916,6 +1923,7 @@ export function handleMarketSellExecuted(event: MarketSellExecuted): void {
   // Create per-participant Fill entity
   let fill = new Fill(baseId);
   fill.market = marketId.toString();
+  fill.venue = market.venue;
   fill.outcome = event.params.outcomeId;
   fill.side = 'SELL';
   fill.tick = priceTick;
