@@ -79,7 +79,13 @@ import {
   PriceMarket,
   PriceMarketSerie,
 } from '../generated/schema';
-import { getOrCreateUser, getOrCreateProtocol, updateTraderPosition, redeemTraderPosition } from './helpers/entities';
+import {
+  getOrCreateUser,
+  getOrCreateProtocol,
+  updateTraderPosition,
+  redeemTraderPosition,
+  getOrCreateUserVenueStat,
+} from './helpers/entities';
 import { generateId } from './helpers/utils';
 
 const SCALE = BigInt.fromString('1000000000000000000'); // 1e18
@@ -105,12 +111,16 @@ function trackUniqueTrader(
 
   market.uniqueTraders = market.uniqueTraders.plus(BigInt.fromI32(1));
 
-  // Increment user's distinct markets traded count
+  // Increment user's distinct markets traded count (global + per-venue)
   let user = User.load(traderAddress);
   if (user != null) {
     user.totalMarketsTraded = user.totalMarketsTraded.plus(BigInt.fromI32(1));
     user.save();
   }
+
+  let venueStat = getOrCreateUserVenueStat(traderAddress, market.venue, timestamp);
+  venueStat.totalMarketsTraded = venueStat.totalMarketsTraded.plus(BigInt.fromI32(1));
+  venueStat.save();
 
   return true;
 }
@@ -993,9 +1003,13 @@ export function handleOrderPlaced(event: OrderPlaced): void {
   market.totalOrders = market.totalOrders.plus(BigInt.fromI32(1));
   market.save();
 
-  // Update user statistics
+  // Update user statistics (global + per-venue)
   user.totalOrdersPlaced = user.totalOrdersPlaced.plus(BigInt.fromI32(1));
   user.save();
+
+  let venueStat = getOrCreateUserVenueStat(user.id, market.venue, event.block.timestamp);
+  venueStat.totalOrdersPlaced = venueStat.totalOrdersPlaced.plus(BigInt.fromI32(1));
+  venueStat.save();
 
   log.info('Order {} placed: market={}, side={}, tick={}, qty={}', [
     orderId.toString(),
@@ -1194,13 +1208,18 @@ export function handleOrderFilled(event: OrderFilled): void {
       'BUY', event.params.qty, collateralCost, event.block.timestamp,
     );
 
-    // Update buyer user stats
+    // Update buyer user stats (global + per-venue)
     let buyUser = User.load(buyOrder.trader);
     if (buyUser != null) {
       buyUser.totalTradeCount = buyUser.totalTradeCount.plus(BigInt.fromI32(1));
       buyUser.totalVolume = buyUser.totalVolume.plus(event.params.qty);
       buyUser.save();
     }
+
+    let buyVenueStat = getOrCreateUserVenueStat(buyOrder.trader, market.venue, event.block.timestamp);
+    buyVenueStat.totalTradeCount = buyVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
+    buyVenueStat.totalVolume = buyVenueStat.totalVolume.plus(event.params.qty);
+    buyVenueStat.save();
   }
 
   // Update sell order filled amount and trader position
@@ -1219,13 +1238,18 @@ export function handleOrderFilled(event: OrderFilled): void {
       'SELL', event.params.qty, collateralCost, event.block.timestamp,
     );
 
-    // Update seller user stats
+    // Update seller user stats (global + per-venue)
     let sellUser = User.load(sellOrder.trader);
     if (sellUser != null) {
       sellUser.totalTradeCount = sellUser.totalTradeCount.plus(BigInt.fromI32(1));
       sellUser.totalVolume = sellUser.totalVolume.plus(event.params.qty);
       sellUser.save();
     }
+
+    let sellVenueStat = getOrCreateUserVenueStat(sellOrder.trader, market.venue, event.block.timestamp);
+    sellVenueStat.totalTradeCount = sellVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
+    sellVenueStat.totalVolume = sellVenueStat.totalVolume.plus(event.params.qty);
+    sellVenueStat.save();
   }
 
   // Update market last trade prices (Normal fill = true price discovery)
@@ -1390,6 +1414,11 @@ export function handleMintFill(event: MintFill): void {
       yesUser.totalVolume = yesUser.totalVolume.plus(event.params.qty);
       yesUser.save();
     }
+
+    let yesVenueStat = getOrCreateUserVenueStat(yesOrder.trader, market.venue, event.block.timestamp);
+    yesVenueStat.totalTradeCount = yesVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
+    yesVenueStat.totalVolume = yesVenueStat.totalVolume.plus(event.params.qty);
+    yesVenueStat.save();
   }
 
   // Update NO order filled amount and trader position
@@ -1413,6 +1442,11 @@ export function handleMintFill(event: MintFill): void {
       noUser.totalVolume = noUser.totalVolume.plus(event.params.qty);
       noUser.save();
     }
+
+    let noVenueStat = getOrCreateUserVenueStat(noOrder.trader, market.venue, event.block.timestamp);
+    noVenueStat.totalTradeCount = noVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
+    noVenueStat.totalVolume = noVenueStat.totalVolume.plus(event.params.qty);
+    noVenueStat.save();
   }
 
   // MintFill IS price discovery — update last trade prices for both outcomes
@@ -1534,6 +1568,11 @@ export function handleMergeFill(event: MergeFill): void {
       yesUser.totalVolume = yesUser.totalVolume.plus(event.params.qty);
       yesUser.save();
     }
+
+    let yesVenueStat = getOrCreateUserVenueStat(yesOrder.trader, market.venue, event.block.timestamp);
+    yesVenueStat.totalTradeCount = yesVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
+    yesVenueStat.totalVolume = yesVenueStat.totalVolume.plus(event.params.qty);
+    yesVenueStat.save();
   }
 
   // Update NO order filled amount and trader position
@@ -1557,6 +1596,11 @@ export function handleMergeFill(event: MergeFill): void {
       noUser.totalVolume = noUser.totalVolume.plus(event.params.qty);
       noUser.save();
     }
+
+    let noVenueStat = getOrCreateUserVenueStat(noOrder.trader, market.venue, event.block.timestamp);
+    noVenueStat.totalTradeCount = noVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
+    noVenueStat.totalVolume = noVenueStat.totalVolume.plus(event.params.qty);
+    noVenueStat.save();
   }
 
   // MergeFill is NOT price discovery — do NOT update lastPriceTick
@@ -1800,10 +1844,15 @@ export function handleMarketOrderExecuted(event: MarketOrderExecuted): void {
     buyVenue.save();
   }
 
-  // Update user statistics
+  // Update user statistics (global + per-venue)
   user.totalVolume = user.totalVolume.plus(event.params.tokensReceived);
   user.totalTradeCount = user.totalTradeCount.plus(BigInt.fromI32(1));
   user.save();
+
+  let buyVenueStat = getOrCreateUserVenueStat(user.id, market.venue, event.block.timestamp);
+  buyVenueStat.totalVolume = buyVenueStat.totalVolume.plus(event.params.tokensReceived);
+  buyVenueStat.totalTradeCount = buyVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
+  buyVenueStat.save();
 
   // Update protocol statistics
   let protocol = getOrCreateProtocol();
@@ -1916,10 +1965,15 @@ export function handleMarketSellExecuted(event: MarketSellExecuted): void {
     sellVenue.save();
   }
 
-  // Update user statistics
+  // Update user statistics (global + per-venue)
   user.totalVolume = user.totalVolume.plus(event.params.tokensSold);
   user.totalTradeCount = user.totalTradeCount.plus(BigInt.fromI32(1));
   user.save();
+
+  let sellVenueStat = getOrCreateUserVenueStat(user.id, market.venue, event.block.timestamp);
+  sellVenueStat.totalVolume = sellVenueStat.totalVolume.plus(event.params.tokensSold);
+  sellVenueStat.totalTradeCount = sellVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
+  sellVenueStat.save();
 
   // Update protocol statistics
   let protocol = getOrCreateProtocol();

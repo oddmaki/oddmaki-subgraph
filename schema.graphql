@@ -214,8 +214,9 @@ type User @entity(immutable: false) {
   orders: [Order!]! @derivedFrom(field: "trader")
   fills: [Fill!]! @derivedFrom(field: "trader")
   positions: [TraderPosition!]! @derivedFrom(field: "trader")
+  venueStats: [UserVenueStat!]! @derivedFrom(field: "trader")
 
-  # Statistics
+  # Statistics (global, across all venues)
   totalOrdersPlaced: BigInt! # Total orders placed
   totalVolume: BigInt! # Total volume traded
   totalMarkets: BigInt! # Markets created
@@ -226,6 +227,24 @@ type User @entity(immutable: false) {
   # Timestamps
   firstSeenAt: BigInt! # First interaction timestamp
   lastSeenAt: BigInt! # Last interaction timestamp
+}
+
+# Per-venue aggregate of a User's trading activity. Backs venue-scoped
+# leaderboard and trader profile stats so each venue-starter instance only
+# sees activity within its own venue.
+type UserVenueStat @entity(immutable: false) {
+  id: ID! # venueId-traderAddress
+  venue: Venue!
+  trader: User!
+  # Statistics (scoped to this venue)
+  totalOrdersPlaced: BigInt! # Orders placed in this venue
+  totalVolume: BigInt! # Trade volume in this venue
+  totalTradeCount: BigInt! # Fill count in this venue
+  totalMarketsTraded: BigInt! # Distinct markets traded in this venue
+  totalRealizedPnL: BigInt! # Cumulative realized P&L in this venue
+  # Timestamps
+  firstSeenAt: BigInt! # First interaction in this venue
+  lastSeenAt: BigInt! # Last interaction in this venue
 }
 
 # ============================================

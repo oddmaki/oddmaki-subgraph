@@ -1,9 +1,39 @@
 import { Address, BigInt, Bytes } from "@graphprotocol/graph-ts";
-import { User, Protocol, Venue, Market, MarketGroup, TraderPosition } from '../../generated/schema';
+import { User, Protocol, Venue, Market, MarketGroup, TraderPosition, UserVenueStat } from '../../generated/schema';
 
 const ZERO = BigInt.fromI32(0);
 const ONE = BigInt.fromI32(1);
 const SCALE = BigInt.fromString('1000000000000000000'); // 1e18
+
+/**
+ * Get or create a UserVenueStat entity tracking a user's per-venue aggregate
+ * trading activity. Mirrors the User global aggregates but scoped to one venue
+ * so venue-starter instances can render venue-scoped leaderboards and profile
+ * stats. Always bumps lastSeenAt before returning.
+ */
+export function getOrCreateUserVenueStat(
+  traderId: string,
+  venueId: string,
+  timestamp: BigInt,
+): UserVenueStat {
+  let id = venueId + '-' + traderId;
+  let stat = UserVenueStat.load(id);
+
+  if (stat == null) {
+    stat = new UserVenueStat(id);
+    stat.venue = venueId;
+    stat.trader = traderId;
+    stat.totalOrdersPlaced = ZERO;
+    stat.totalVolume = ZERO;
+    stat.totalTradeCount = ZERO;
+    stat.totalMarketsTraded = ZERO;
+    stat.totalRealizedPnL = ZERO;
+    stat.firstSeenAt = timestamp;
+  }
+
+  stat.lastSeenAt = timestamp;
+  return stat;
+}
 
 /**
  * Get or create a User entity
@@ -91,13 +121,16 @@ export function updateTraderPosition(
   let id = traderId + '-' + marketId + '-' + outcome.toString();
   let position = TraderPosition.load(id);
 
+  // Look up the venue once — needed for the position's denormalized venue field
+  // and for updating the per-venue user stat below.
+  let market = Market.load(marketId);
+  let venueId = market != null ? market.venue : '';
+
   if (position == null) {
     position = new TraderPosition(id);
     position.trader = traderId;
     position.market = marketId;
-    // Denormalize venue from market
-    let market = Market.load(marketId);
-    position.venue = market != null ? market.venue : '';
+    position.venue = venueId;
     position.outcome = outcome;
     position.quantity = ZERO;
     position.totalCostBasis = ZERO;
@@ -147,11 +180,16 @@ export function updateTraderPosition(
       position.totalCostBasis = position.totalCostBasis.minus(costBasisSold);
     }
 
-    // Update user's realized P&L aggregate
+    // Update user's realized P&L aggregate (global + per-venue)
     let user = User.load(traderId);
     if (user != null) {
       user.totalRealizedPnL = user.totalRealizedPnL.plus(pnl);
       user.save();
+    }
+    if (venueId != '') {
+      let venueStat = getOrCreateUserVenueStat(traderId, venueId, timestamp);
+      venueStat.totalRealizedPnL = venueStat.totalRealizedPnL.plus(pnl);
+      venueStat.save();
     }
   }
 
@@ -210,12 +248,23 @@ export function redeemTraderPosition(
     }
   }
 
+  // Net P&L delta for the redemption: payout received minus cost basis written off.
+  let pnlDelta = payout.minus(totalCostBasisCleared);
+
   // Add payout as realized P&L on the user aggregate
   // Combined with the costBasis subtractions above, net effect:
   // user.totalRealizedPnL += (payout - totalCostBasisCleared)
   let user = User.load(traderId);
   if (user != null) {
-    user.totalRealizedPnL = user.totalRealizedPnL.minus(totalCostBasisCleared).plus(payout);
+    user.totalRealizedPnL = user.totalRealizedPnL.plus(pnlDelta);
     user.save();
+  }
+
+  // Mirror into the per-venue stat. Look up the venue from the market.
+  let market = Market.load(marketId);
+  if (market != null) {
+    let venueStat = getOrCreateUserVenueStat(traderId, market.venue, timestamp);
+    venueStat.totalRealizedPnL = venueStat.totalRealizedPnL.plus(pnlDelta);
+    venueStat.save();
   }
 }
