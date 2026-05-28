@@ -31,8 +31,8 @@ import {
   TradeExecuted,
   FeesDistributed,
   TopOfBookChanged,
-  MarketOrderExecuted,
-  MarketSellExecuted,
+  MarketOrderBuy,
+  MarketOrderSell,
   AssertionCreated,
   AssertionSettled,
   AssertionDisputed,
@@ -1643,7 +1643,7 @@ export function handleMergeFill(event: MergeFill): void {
 
 export function handleTradeExecuted(event: TradeExecuted): void {
   // Minimal handler for now. Trade entities are created by the fill-specific handlers
-  // (handleOrderFilled, handleMintFill, handleMarketOrderExecuted).
+  // (handleOrderFilled, handleMintFill, handleMarketOrderBuy).
   // TradeExecuted is the future hook for timeseries/candlestick entities.
   log.info(
     'TradeExecuted: market={}, outcome={}, fillId={}, tick={}, qty={}, cumVol={}',
@@ -1759,12 +1759,12 @@ export function handleTopOfBookChanged(event: TopOfBookChanged): void {
 // Market Orders
 // ============================================
 
-export function handleMarketOrderExecuted(event: MarketOrderExecuted): void {
+export function handleMarketOrderBuy(event: MarketOrderBuy): void {
   let marketId = event.params.marketId;
   let market = Market.load(marketId.toString());
 
   if (market == null) {
-    log.warning('Market {} not found in MarketOrderExecuted event', [
+    log.warning('Market {} not found in MarketOrderBuy event', [
       marketId.toString(),
     ]);
     return;
@@ -1870,7 +1870,7 @@ export function handleMarketOrderExecuted(event: MarketOrderExecuted): void {
   protocol.save();
 
   log.info(
-    'MarketOrderExecuted: buyer={}, market={}, outcome={}, spent={}, received={}',
+    'MarketOrderBuy: buyer={}, market={}, outcome={}, spent={}, received={}',
     [
       event.params.buyer.toHexString(),
       marketId.toString(),
@@ -1881,12 +1881,12 @@ export function handleMarketOrderExecuted(event: MarketOrderExecuted): void {
   );
 }
 
-export function handleMarketSellExecuted(event: MarketSellExecuted): void {
+export function handleMarketOrderSell(event: MarketOrderSell): void {
   let marketId = event.params.marketId;
   let market = Market.load(marketId.toString());
 
   if (market == null) {
-    log.warning('Market {} not found in MarketSellExecuted event', [
+    log.warning('Market {} not found in MarketOrderSell event', [
       marketId.toString(),
     ]);
     return;
@@ -1992,7 +1992,7 @@ export function handleMarketSellExecuted(event: MarketSellExecuted): void {
   protocol.save();
 
   log.info(
-    'MarketSellExecuted: seller={}, market={}, outcome={}, sold={}, received={}',
+    'MarketOrderSell: seller={}, market={}, outcome={}, sold={}, received={}',
     [
       event.params.seller.toHexString(),
       marketId.toString(),
