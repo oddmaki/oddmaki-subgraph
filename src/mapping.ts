@@ -1117,96 +1117,90 @@ export function handleOrderFilled(event: OrderFilled): void {
     return;
   }
 
-  // Load buy / sell orders. orderId == 0 marks a market-taker side: the
-  // taker has no resting order, and the surrounding handleMarketOrderBuy /
-  // handleMarketOrderSell handler already created the Trade + Fill entity
-  // for that side. Skip the duplicate here so we don't emit ghost rows
-  // with empty trader fields.
+  // Load buy order
   let buyOrderId = event.params.buyOrderId;
   let buyOrder = Order.load(buyOrderId.toString());
+
+  // Load sell order
   let sellOrderId = event.params.sellOrderId;
   let sellOrder = Order.load(sellOrderId.toString());
-  let buyIsMaker = buyOrderId.gt(BigInt.fromI32(0)) && buyOrder != null;
-  let sellIsMaker = sellOrderId.gt(BigInt.fromI32(0)) && sellOrder != null;
 
   // Compute collateral cost: qty * priceTick * tickSize / 1e18
   let tickSize = market.tickSize;
   let collateralCost = event.params.qty.times(event.params.priceTick).times(tickSize).div(SCALE);
 
-  // Create market-level Trade entity only when BOTH sides are makers
-  // (= matching-engine normal cross). When one side is a market taker, the
-  // MarketOrderBuy / MarketOrderSell entity is the canonical user-facing
-  // trade record; emitting an extra OrderFill Trade here would duplicate.
-  if (buyIsMaker && sellIsMaker) {
-    let tradeId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-    ]);
+  // Create market-level Trade entity (one per match).
+  // NOTE: when one side is a market-taker (buyOrderId == 0 or sellOrderId == 0)
+  // the corresponding trader becomes '', which renders as "—" / ghost row in
+  // the UI and duplicates the MarketOrderBuy / MarketOrderSell entity. The
+  // gating attempt to suppress those (v1.6.1–v1.6.3) deterministically
+  // stalled the indexer mid-sync without surfaced errors. Restored v1.6.0
+  // behaviour here. Ghost trades should be filtered client-side
+  // (e.g. `where: { buyTrader_not: "" }` in the Recent Trades query) until
+  // we can debug the indexer stall under controlled conditions.
+  let tradeId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+  ]);
 
-    let trade = new Trade(tradeId);
-    trade.market = marketId.toString();
-    trade.outcome = event.params.outcomeId;
-    trade.tick = event.params.priceTick;
-    trade.amount = event.params.qty;
-    trade.cost = collateralCost;
-    trade.tradeType = 'OrderFill';
-    trade.buyTrader = buyOrder!.trader;
-    trade.sellTrader = sellOrder!.trader;
-    trade.timestamp = event.block.timestamp;
-    trade.blockNumber = event.block.number;
-    trade.transactionHash = event.transaction.hash;
-    trade.save();
-  }
+  let trade = new Trade(tradeId);
+  trade.market = marketId.toString();
+  trade.outcome = event.params.outcomeId;
+  trade.tick = event.params.priceTick;
+  trade.amount = event.params.qty;
+  trade.cost = collateralCost;
+  trade.tradeType = 'OrderFill';
+  trade.buyTrader = buyOrder != null ? buyOrder.trader : '';
+  trade.sellTrader = sellOrder != null ? sellOrder.trader : '';
+  trade.timestamp = event.block.timestamp;
+  trade.blockNumber = event.block.number;
+  trade.transactionHash = event.transaction.hash;
+  trade.save();
 
-  // Per-participant Fill entities — one per actual maker (skip the
-  // market-taker sides that the MarketOrderBuy/Sell handler covers).
-  if (buyIsMaker) {
-    let buyFillId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-      'buy',
-    ]);
+  // Create per-participant Fill entities (one per side)
+  let buyFillId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+    'buy',
+  ]);
 
-    let buyFill = new Fill(buyFillId);
-    buyFill.market = marketId.toString();
-    buyFill.venue = market.venue;
-    buyFill.outcome = event.params.outcomeId;
-    buyFill.side = 'BUY';
-    buyFill.tick = event.params.priceTick;
-    buyFill.amount = event.params.qty;
-    buyFill.cost = collateralCost;
-    buyFill.fees = BigInt.fromI32(0); // Tracked in FeesDistributed
-    buyFill.trader = buyOrder!.trader;
-    buyFill.tradeType = 'OrderFill';
-    buyFill.timestamp = event.block.timestamp;
-    buyFill.blockNumber = event.block.number;
-    buyFill.transactionHash = event.transaction.hash;
-    buyFill.save();
-  }
+  let buyFill = new Fill(buyFillId);
+  buyFill.market = marketId.toString();
+  buyFill.venue = market.venue;
+  buyFill.outcome = event.params.outcomeId;
+  buyFill.side = 'BUY';
+  buyFill.tick = event.params.priceTick;
+  buyFill.amount = event.params.qty;
+  buyFill.cost = collateralCost;
+  buyFill.fees = BigInt.fromI32(0); // Tracked in FeesDistributed
+  buyFill.trader = buyOrder != null ? buyOrder.trader : '';
+  buyFill.tradeType = 'OrderFill';
+  buyFill.timestamp = event.block.timestamp;
+  buyFill.blockNumber = event.block.number;
+  buyFill.transactionHash = event.transaction.hash;
+  buyFill.save();
 
-  if (sellIsMaker) {
-    let sellFillId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-      'sell',
-    ]);
+  let sellFillId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+    'sell',
+  ]);
 
-    let sellFill = new Fill(sellFillId);
-    sellFill.market = marketId.toString();
-    sellFill.venue = market.venue;
-    sellFill.outcome = event.params.outcomeId;
-    sellFill.side = 'SELL';
-    sellFill.tick = event.params.priceTick;
-    sellFill.amount = event.params.qty;
-    sellFill.cost = collateralCost;
-    sellFill.fees = BigInt.fromI32(0);
-    sellFill.trader = sellOrder!.trader;
-    sellFill.tradeType = 'OrderFill';
-    sellFill.timestamp = event.block.timestamp;
-    sellFill.blockNumber = event.block.number;
-    sellFill.transactionHash = event.transaction.hash;
-    sellFill.save();
-  }
+  let sellFill = new Fill(sellFillId);
+  sellFill.market = marketId.toString();
+  sellFill.venue = market.venue;
+  sellFill.outcome = event.params.outcomeId;
+  sellFill.side = 'SELL';
+  sellFill.tick = event.params.priceTick;
+  sellFill.amount = event.params.qty;
+  sellFill.cost = collateralCost;
+  sellFill.fees = BigInt.fromI32(0);
+  sellFill.trader = sellOrder != null ? sellOrder.trader : '';
+  sellFill.tradeType = 'OrderFill';
+  sellFill.timestamp = event.block.timestamp;
+  sellFill.blockNumber = event.block.number;
+  sellFill.transactionHash = event.transaction.hash;
+  sellFill.save();
 
   // Update buy order filled amount and trader position
   if (buyOrder != null) {
