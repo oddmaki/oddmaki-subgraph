@@ -1268,9 +1268,7 @@ export function handleOrderFilled(event: OrderFilled): void {
     sellVenueStat.save();
   }
 
-  // Update market last trade prices (Normal fill = true price discovery).
-  // ALWAYS update — last-trade tracking is independent of double-count
-  // concerns (we always want the most-recent price tick).
+  // Update market last trade prices (Normal fill = true price discovery)
   if (event.params.outcomeId.equals(BigInt.fromI32(0))) {
     market.lastPriceTick_0 = event.params.priceTick;
     market.lastTradeTimestamp_0 = event.block.timestamp;
@@ -1281,30 +1279,28 @@ export function handleOrderFilled(event: OrderFilled): void {
   market.lastTradeTimestamp = event.block.timestamp;
   market.lastTradeOutcome = event.params.outcomeId.toI32();
 
-  // Volume statistics — only update when BOTH sides are makers
-  // (matching-engine fill). When one side is a market taker, the
-  // surrounding handleMarketOrderBuy / handleMarketOrderSell handler has
-  // already incremented market / venue / protocol totalVolume for this
-  // fill; doing it again here would double-count.
-  if (buyIsMaker && sellIsMaker) {
-    market.totalVolume = market.totalVolume.plus(event.params.qty);
-    market.save();
+  // Update market statistics.
+  // NOTE: this double-counts when one side is a market-taker (handleMarketOrderBuy
+  // / handleMarketOrderSell increments the same totals for the fill). Tracking
+  // the cleanup in a follow-up — restore to v1.6.0 behaviour here so the
+  // indexer progresses past block 42140281, which deterministically stalled
+  // under the gated version.
+  market.totalVolume = market.totalVolume.plus(event.params.qty);
+  market.save();
 
-    let venue = Venue.load(market.venue);
-    if (venue != null) {
-      venue.totalVolume = venue.totalVolume.plus(event.params.qty);
-      venue.updatedAt = event.block.timestamp;
-      venue.save();
-    }
-
-    let protocol = getOrCreateProtocol();
-    protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
-    protocol.updatedAt = event.block.timestamp;
-    protocol.save();
-  } else {
-    // Last-trade fields still need to be committed.
-    market.save();
+  // Update venue statistics
+  let venue = Venue.load(market.venue);
+  if (venue != null) {
+    venue.totalVolume = venue.totalVolume.plus(event.params.qty);
+    venue.updatedAt = event.block.timestamp;
+    venue.save();
   }
+
+  // Update protocol statistics
+  let protocol = getOrCreateProtocol();
+  protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
+  protocol.updatedAt = event.block.timestamp;
+  protocol.save();
 
   log.info('OrderFilled: buy={}, sell={}, market={}, outcome={}, qty={}, tick={}', [
     buyOrderId.toString(),
@@ -1492,9 +1488,7 @@ export function handleMintFill(event: MintFill): void {
     noVenueStat.save();
   }
 
-  // MintFill IS price discovery — update last trade prices for both outcomes.
-  // Always commit these, regardless of whether the fill is matching-engine
-  // or market-taker driven.
+  // MintFill IS price discovery — update last trade prices for both outcomes
   market.lastPriceTick_0 = event.params.yesTick;
   market.lastPriceTick_1 = event.params.noTick;
   market.lastTradeTimestamp = event.block.timestamp;
@@ -1502,28 +1496,24 @@ export function handleMintFill(event: MintFill): void {
   market.lastTradeTimestamp_1 = event.block.timestamp;
   market.lastTradeOutcome = 0; // Both outcomes traded; convention: report outcome 0
 
-  // Volume statistics — only update when BOTH sides are makers
-  // (matching-engine fill). When one side is a market taker, the
-  // surrounding handleMarketOrderBuy / handleMarketOrderSell handler has
-  // already incremented these totals.
-  if (yesIsMaker && noIsMaker) {
-    market.totalVolume = market.totalVolume.plus(event.params.qty);
-    market.save();
+  // Update market statistics (count volume once, not per outcome).
+  // NOTE: v1.6.0 behaviour restored — see handleOrderFilled comment.
+  market.totalVolume = market.totalVolume.plus(event.params.qty);
+  market.save();
 
-    let mintVenue = Venue.load(market.venue);
-    if (mintVenue != null) {
-      mintVenue.totalVolume = mintVenue.totalVolume.plus(event.params.qty);
-      mintVenue.updatedAt = event.block.timestamp;
-      mintVenue.save();
-    }
-
-    let protocol = getOrCreateProtocol();
-    protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
-    protocol.updatedAt = event.block.timestamp;
-    protocol.save();
-  } else {
-    market.save();
+  // Update venue statistics
+  let mintVenue = Venue.load(market.venue);
+  if (mintVenue != null) {
+    mintVenue.totalVolume = mintVenue.totalVolume.plus(event.params.qty);
+    mintVenue.updatedAt = event.block.timestamp;
+    mintVenue.save();
   }
+
+  // Update protocol statistics
+  let protocol = getOrCreateProtocol();
+  protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
+  protocol.updatedAt = event.block.timestamp;
+  protocol.save();
 
   log.info('MintFill: market={}, qty={}, yesTick={}, noTick={}', [
     marketId.toString(),
@@ -1663,27 +1653,26 @@ export function handleMergeFill(event: MergeFill): void {
     noVenueStat.save();
   }
 
-  // MergeFill is NOT price discovery — do NOT update lastPriceTick.
+  // MergeFill is NOT price discovery — do NOT update lastPriceTick
 
-  // Volume statistics — only update when BOTH sides are makers
-  // (matching-engine merge). When one side is a market-taker SELL, the
-  // surrounding handleMarketOrderSell handler has already incremented these.
-  if (yesIsMaker && noIsMaker) {
-    market.totalVolume = market.totalVolume.plus(event.params.qty);
-    market.save();
+  // Update market statistics (count volume once, not per outcome).
+  // NOTE: v1.6.0 behaviour restored — see handleOrderFilled comment.
+  market.totalVolume = market.totalVolume.plus(event.params.qty);
+  market.save();
 
-    let mergeVenue = Venue.load(market.venue);
-    if (mergeVenue != null) {
-      mergeVenue.totalVolume = mergeVenue.totalVolume.plus(event.params.qty);
-      mergeVenue.updatedAt = event.block.timestamp;
-      mergeVenue.save();
-    }
-
-    let protocol = getOrCreateProtocol();
-    protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
-    protocol.updatedAt = event.block.timestamp;
-    protocol.save();
+  // Update venue statistics
+  let mergeVenue = Venue.load(market.venue);
+  if (mergeVenue != null) {
+    mergeVenue.totalVolume = mergeVenue.totalVolume.plus(event.params.qty);
+    mergeVenue.updatedAt = event.block.timestamp;
+    mergeVenue.save();
   }
+
+  // Update protocol statistics
+  let protocol = getOrCreateProtocol();
+  protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
+  protocol.updatedAt = event.block.timestamp;
+  protocol.save();
 
   log.info('MergeFill: market={}, qty={}, yesTick={}, noTick={}', [
     marketId.toString(),
