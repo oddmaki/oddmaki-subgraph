@@ -1553,7 +1553,10 @@ export function handleMergeFill(event: MergeFill): void {
   noFill.transactionHash = event.transaction.hash;
   noFill.save();
 
-  // Update YES order filled amount and trader position
+  // Update YES order filled amount and trader position. MergeFill is a
+  // position exit, not a market trade — see v1.7.0. We update the order
+  // book + the trader's position, but DO NOT credit trade count or volume
+  // to the user / venue / market / protocol aggregates.
   if (yesOrder != null) {
     yesOrder.filled = yesOrder.filled.plus(event.params.qty);
     if (yesOrder.filled.ge(yesOrder.amount)) {
@@ -1567,21 +1570,10 @@ export function handleMergeFill(event: MergeFill): void {
       yesOrder.trader, marketId.toString(), BigInt.fromI32(0),
       'SELL', event.params.qty, yesProceeds, event.block.timestamp,
     );
-
-    let yesUser = User.load(yesOrder.trader);
-    if (yesUser != null) {
-      yesUser.totalTradeCount = yesUser.totalTradeCount.plus(BigInt.fromI32(1));
-      yesUser.totalVolume = yesUser.totalVolume.plus(event.params.qty);
-      yesUser.save();
-    }
-
-    let yesVenueStat = getOrCreateUserVenueStat(yesOrder.trader, market.venue, event.block.timestamp);
-    yesVenueStat.totalTradeCount = yesVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
-    yesVenueStat.totalVolume = yesVenueStat.totalVolume.plus(event.params.qty);
-    yesVenueStat.save();
   }
 
-  // Update NO order filled amount and trader position
+  // Update NO order filled amount and trader position. Same v1.7.0 rule:
+  // position exit only, no trade-count / volume aggregates touched.
   if (noOrder != null) {
     noOrder.filled = noOrder.filled.plus(event.params.qty);
     if (noOrder.filled.ge(noOrder.amount)) {
@@ -1595,39 +1587,11 @@ export function handleMergeFill(event: MergeFill): void {
       noOrder.trader, marketId.toString(), BigInt.fromI32(1),
       'SELL', event.params.qty, noProceeds, event.block.timestamp,
     );
-
-    let noUser = User.load(noOrder.trader);
-    if (noUser != null) {
-      noUser.totalTradeCount = noUser.totalTradeCount.plus(BigInt.fromI32(1));
-      noUser.totalVolume = noUser.totalVolume.plus(event.params.qty);
-      noUser.save();
-    }
-
-    let noVenueStat = getOrCreateUserVenueStat(noOrder.trader, market.venue, event.block.timestamp);
-    noVenueStat.totalTradeCount = noVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
-    noVenueStat.totalVolume = noVenueStat.totalVolume.plus(event.params.qty);
-    noVenueStat.save();
   }
 
-  // MergeFill is NOT price discovery — do NOT update lastPriceTick
-
-  // Update market statistics (count volume once, not per outcome)
-  market.totalVolume = market.totalVolume.plus(event.params.qty);
-  market.save();
-
-  // Update venue statistics
-  let mergeVenue = Venue.load(market.venue);
-  if (mergeVenue != null) {
-    mergeVenue.totalVolume = mergeVenue.totalVolume.plus(event.params.qty);
-    mergeVenue.updatedAt = event.block.timestamp;
-    mergeVenue.save();
-  }
-
-  // Update protocol statistics
-  let protocol = getOrCreateProtocol();
-  protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
-  protocol.updatedAt = event.block.timestamp;
-  protocol.save();
+  // MergeFill is NOT price discovery — do NOT update lastPriceTick.
+  // MergeFill is NOT a market trade — do NOT update market / venue / protocol
+  // totalVolume here. Fill entities above remain for P&L tracking only.
 
   log.info('MergeFill: market={}, qty={}, yesTick={}, noTick={}', [
     marketId.toString(),
@@ -1839,19 +1803,13 @@ export function handleMarketOrderBuy(event: MarketOrderBuy): void {
     event.block.timestamp,
   );
 
-  // Update market statistics
-  market.totalVolume = market.totalVolume.plus(event.params.tokensReceived);
+  // Persist lastPriceTick / lastTradeTimestamp updates set above. Aggregate
+  // volume (market/venue/protocol) is owned by the fill handlers — see v1.7.0.
   market.save();
 
-  // Update venue statistics
-  let buyVenue = Venue.load(market.venue);
-  if (buyVenue != null) {
-    buyVenue.totalVolume = buyVenue.totalVolume.plus(event.params.tokensReceived);
-    buyVenue.updatedAt = event.block.timestamp;
-    buyVenue.save();
-  }
-
-  // Update user statistics (global + per-venue)
+  // Update taker user statistics (global + per-venue). The taker is not
+  // credited in handleOrderFilled / handleMintFill because its orderId is 0
+  // in the fill event, so this is the only place it is counted.
   user.totalVolume = user.totalVolume.plus(event.params.tokensReceived);
   user.totalTradeCount = user.totalTradeCount.plus(BigInt.fromI32(1));
   user.save();
@@ -1860,14 +1818,6 @@ export function handleMarketOrderBuy(event: MarketOrderBuy): void {
   buyVenueStat.totalVolume = buyVenueStat.totalVolume.plus(event.params.tokensReceived);
   buyVenueStat.totalTradeCount = buyVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
   buyVenueStat.save();
-
-  // Update protocol statistics
-  let protocol = getOrCreateProtocol();
-  protocol.totalVolume = protocol.totalVolume.plus(
-    event.params.tokensReceived,
-  );
-  protocol.updatedAt = event.block.timestamp;
-  protocol.save();
 
   log.info(
     'MarketOrderBuy: buyer={}, market={}, outcome={}, spent={}, received={}',
@@ -1961,19 +1911,13 @@ export function handleMarketOrderSell(event: MarketOrderSell): void {
     event.block.timestamp,
   );
 
-  // Update market statistics
-  market.totalVolume = market.totalVolume.plus(event.params.tokensSold);
+  // Persist lastPriceTick / lastTradeTimestamp updates set above. Aggregate
+  // volume (market/venue/protocol) is owned by the fill handlers — see v1.7.0.
   market.save();
 
-  // Update venue statistics
-  let sellVenue = Venue.load(market.venue);
-  if (sellVenue != null) {
-    sellVenue.totalVolume = sellVenue.totalVolume.plus(event.params.tokensSold);
-    sellVenue.updatedAt = event.block.timestamp;
-    sellVenue.save();
-  }
-
-  // Update user statistics (global + per-venue)
+  // Update taker user statistics (global + per-venue). The taker is not
+  // credited in handleOrderFilled / handleMintFill because its orderId is 0
+  // in the fill event, so this is the only place it is counted.
   user.totalVolume = user.totalVolume.plus(event.params.tokensSold);
   user.totalTradeCount = user.totalTradeCount.plus(BigInt.fromI32(1));
   user.save();
@@ -1982,14 +1926,6 @@ export function handleMarketOrderSell(event: MarketOrderSell): void {
   sellVenueStat.totalVolume = sellVenueStat.totalVolume.plus(event.params.tokensSold);
   sellVenueStat.totalTradeCount = sellVenueStat.totalTradeCount.plus(BigInt.fromI32(1));
   sellVenueStat.save();
-
-  // Update protocol statistics
-  let protocol = getOrCreateProtocol();
-  protocol.totalVolume = protocol.totalVolume.plus(
-    event.params.tokensSold,
-  );
-  protocol.updatedAt = event.block.timestamp;
-  protocol.save();
 
   log.info(
     'MarketOrderSell: seller={}, market={}, outcome={}, sold={}, received={}',
