@@ -1129,15 +1129,7 @@ export function handleOrderFilled(event: OrderFilled): void {
   let tickSize = market.tickSize;
   let collateralCost = event.params.qty.times(event.params.priceTick).times(tickSize).div(SCALE);
 
-  // Create market-level Trade entity (one per match).
-  // NOTE: when one side is a market-taker (buyOrderId == 0 or sellOrderId == 0)
-  // the corresponding trader becomes '', which renders as "—" / ghost row in
-  // the UI and duplicates the MarketOrderBuy / MarketOrderSell entity. The
-  // gating attempt to suppress those (v1.6.1–v1.6.3) deterministically
-  // stalled the indexer mid-sync without surfaced errors. Restored v1.6.0
-  // behaviour here. Ghost trades should be filtered client-side
-  // (e.g. `where: { buyTrader_not: "" }` in the Recent Trades query) until
-  // we can debug the indexer stall under controlled conditions.
+  // Create market-level Trade entity (one per match)
   let tradeId = generateId([
     event.transaction.hash.toHexString(),
     event.logIndex.toString(),
@@ -1273,12 +1265,7 @@ export function handleOrderFilled(event: OrderFilled): void {
   market.lastTradeTimestamp = event.block.timestamp;
   market.lastTradeOutcome = event.params.outcomeId.toI32();
 
-  // Update market statistics.
-  // NOTE: this double-counts when one side is a market-taker (handleMarketOrderBuy
-  // / handleMarketOrderSell increments the same totals for the fill). Tracking
-  // the cleanup in a follow-up — restore to v1.6.0 behaviour here so the
-  // indexer progresses past block 42140281, which deterministically stalled
-  // under the gated version.
+  // Update market statistics
   market.totalVolume = market.totalVolume.plus(event.params.qty);
   market.save();
 
@@ -1317,114 +1304,98 @@ export function handleMintFill(event: MintFill): void {
     return;
   }
 
-  // Load orders to get trader addresses. orderId == 0 marks a market-taker
-  // side: the corresponding outcome's user already has Trade + Fill entities
-  // created by the surrounding handleMarketOrderBuy handler, so we skip the
-  // duplicate entities for that side and only record the maker side here.
+  // Load orders to get trader addresses
   let yesOrder = Order.load(event.params.yesOrderId.toString());
   let noOrder = Order.load(event.params.noOrderId.toString());
-  let yesIsMaker = event.params.yesOrderId.gt(BigInt.fromI32(0)) && yesOrder != null;
-  let noIsMaker = event.params.noOrderId.gt(BigInt.fromI32(0)) && noOrder != null;
 
   // Compute collateral costs
   let tickSize = market.tickSize;
   let yesCost = event.params.qty.times(event.params.yesTick).times(tickSize).div(SCALE);
   let noCost = event.params.qty.times(event.params.noTick).times(tickSize).div(SCALE);
 
-  // Create market-level Trade entities — only for the maker side(s). For
-  // matching-engine mints both sides are makers (two distinct buyers); for
-  // market-taker mints only one side is a maker and the taker's user-facing
-  // trade is the surrounding MarketOrderBuy / MarketOrderSell entity.
-  if (yesIsMaker) {
-    let yesTradeId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-      '0',
-    ]);
+  // Create market-level Trade entities (one per outcome — two distinct acquisitions at different prices)
+  let yesTradeId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+    '0',
+  ]);
 
-    let yesTrade = new Trade(yesTradeId);
-    yesTrade.market = marketId.toString();
-    yesTrade.outcome = BigInt.fromI32(0);
-    yesTrade.tick = event.params.yesTick;
-    yesTrade.amount = event.params.qty;
-    yesTrade.cost = yesCost;
-    yesTrade.tradeType = 'MintFill';
-    yesTrade.buyTrader = yesOrder!.trader;
-    yesTrade.timestamp = event.block.timestamp;
-    yesTrade.blockNumber = event.block.number;
-    yesTrade.transactionHash = event.transaction.hash;
-    yesTrade.save();
-  }
+  let yesTrade = new Trade(yesTradeId);
+  yesTrade.market = marketId.toString();
+  yesTrade.outcome = BigInt.fromI32(0);
+  yesTrade.tick = event.params.yesTick;
+  yesTrade.amount = event.params.qty;
+  yesTrade.cost = yesCost;
+  yesTrade.tradeType = 'MintFill';
+  yesTrade.buyTrader = yesOrder != null ? yesOrder.trader : '';
+  yesTrade.timestamp = event.block.timestamp;
+  yesTrade.blockNumber = event.block.number;
+  yesTrade.transactionHash = event.transaction.hash;
+  yesTrade.save();
 
-  if (noIsMaker) {
-    let noTradeId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-      '1',
-    ]);
+  let noTradeId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+    '1',
+  ]);
 
-    let noTrade = new Trade(noTradeId);
-    noTrade.market = marketId.toString();
-    noTrade.outcome = BigInt.fromI32(1);
-    noTrade.tick = event.params.noTick;
-    noTrade.amount = event.params.qty;
-    noTrade.cost = noCost;
-    noTrade.tradeType = 'MintFill';
-    noTrade.buyTrader = noOrder!.trader;
-    noTrade.timestamp = event.block.timestamp;
-    noTrade.blockNumber = event.block.number;
-    noTrade.transactionHash = event.transaction.hash;
-    noTrade.save();
-  }
+  let noTrade = new Trade(noTradeId);
+  noTrade.market = marketId.toString();
+  noTrade.outcome = BigInt.fromI32(1);
+  noTrade.tick = event.params.noTick;
+  noTrade.amount = event.params.qty;
+  noTrade.cost = noCost;
+  noTrade.tradeType = 'MintFill';
+  noTrade.buyTrader = noOrder != null ? noOrder.trader : '';
+  noTrade.timestamp = event.block.timestamp;
+  noTrade.blockNumber = event.block.number;
+  noTrade.transactionHash = event.transaction.hash;
+  noTrade.save();
 
-  // Per-participant Fill entities — same maker-only gating as above.
-  if (yesIsMaker) {
-    let yesFillId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-      '0',
-    ]);
+  // Create per-participant Fill entities (one per buyer)
+  let yesFillId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+    '0',
+  ]);
 
-    let yesFill = new Fill(yesFillId);
-    yesFill.market = marketId.toString();
-    yesFill.venue = market.venue;
-    yesFill.outcome = BigInt.fromI32(0);
-    yesFill.side = 'BUY';
-    yesFill.tick = event.params.yesTick;
-    yesFill.amount = event.params.qty;
-    yesFill.cost = yesCost;
-    yesFill.fees = BigInt.fromI32(0);
-    yesFill.trader = yesOrder!.trader;
-    yesFill.tradeType = 'MintFill';
-    yesFill.timestamp = event.block.timestamp;
-    yesFill.blockNumber = event.block.number;
-    yesFill.transactionHash = event.transaction.hash;
-    yesFill.save();
-  }
+  let yesFill = new Fill(yesFillId);
+  yesFill.market = marketId.toString();
+  yesFill.venue = market.venue;
+  yesFill.outcome = BigInt.fromI32(0);
+  yesFill.side = 'BUY';
+  yesFill.tick = event.params.yesTick;
+  yesFill.amount = event.params.qty;
+  yesFill.cost = yesCost;
+  yesFill.fees = BigInt.fromI32(0);
+  yesFill.trader = yesOrder != null ? yesOrder.trader : '';
+  yesFill.tradeType = 'MintFill';
+  yesFill.timestamp = event.block.timestamp;
+  yesFill.blockNumber = event.block.number;
+  yesFill.transactionHash = event.transaction.hash;
+  yesFill.save();
 
-  if (noIsMaker) {
-    let noFillId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-      '1',
-    ]);
+  let noFillId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+    '1',
+  ]);
 
-    let noFill = new Fill(noFillId);
-    noFill.market = marketId.toString();
-    noFill.venue = market.venue;
-    noFill.outcome = BigInt.fromI32(1);
-    noFill.side = 'BUY';
-    noFill.tick = event.params.noTick;
-    noFill.amount = event.params.qty;
-    noFill.cost = noCost;
-    noFill.fees = BigInt.fromI32(0);
-    noFill.trader = noOrder!.trader;
-    noFill.tradeType = 'MintFill';
-    noFill.timestamp = event.block.timestamp;
-    noFill.blockNumber = event.block.number;
-    noFill.transactionHash = event.transaction.hash;
-    noFill.save();
-  }
+  let noFill = new Fill(noFillId);
+  noFill.market = marketId.toString();
+  noFill.venue = market.venue;
+  noFill.outcome = BigInt.fromI32(1);
+  noFill.side = 'BUY';
+  noFill.tick = event.params.noTick;
+  noFill.amount = event.params.qty;
+  noFill.cost = noCost;
+  noFill.fees = BigInt.fromI32(0);
+  noFill.trader = noOrder != null ? noOrder.trader : '';
+  noFill.tradeType = 'MintFill';
+  noFill.timestamp = event.block.timestamp;
+  noFill.blockNumber = event.block.number;
+  noFill.transactionHash = event.transaction.hash;
+  noFill.save();
 
   // Update YES order filled amount and trader position
   if (yesOrder != null) {
@@ -1490,8 +1461,7 @@ export function handleMintFill(event: MintFill): void {
   market.lastTradeTimestamp_1 = event.block.timestamp;
   market.lastTradeOutcome = 0; // Both outcomes traded; convention: report outcome 0
 
-  // Update market statistics (count volume once, not per outcome).
-  // NOTE: v1.6.0 behaviour restored — see handleOrderFilled comment.
+  // Update market statistics (count volume once, not per outcome)
   market.totalVolume = market.totalVolume.plus(event.params.qty);
   market.save();
 
@@ -1528,13 +1498,9 @@ export function handleMergeFill(event: MergeFill): void {
     return;
   }
 
-  // Load orders to get trader addresses. orderId == 0 marks a market-taker
-  // side: the corresponding outcome's user already has a Fill entity
-  // created by the surrounding handleMarketOrderSell handler.
+  // Load orders to get trader addresses
   let yesOrder = Order.load(event.params.yesOrderId.toString());
   let noOrder = Order.load(event.params.noOrderId.toString());
-  let yesIsMaker = event.params.yesOrderId.gt(BigInt.fromI32(0)) && yesOrder != null;
-  let noIsMaker = event.params.noOrderId.gt(BigInt.fromI32(0)) && noOrder != null;
 
   // Compute collateral proceeds
   let tickSize = market.tickSize;
@@ -1542,54 +1508,50 @@ export function handleMergeFill(event: MergeFill): void {
   let noProceeds = event.params.qty.times(event.params.noTick).times(tickSize).div(SCALE);
 
   // MergeFill is NOT a market trade event (position exit, not purchase intent) — no Trade entities.
-  // Per-participant Fill entities for trader activity and P&L tracking, maker side only.
-  if (yesIsMaker) {
-    let yesFillId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-      '0',
-    ]);
+  // Create per-participant Fill entities for trader activity and P&L tracking.
+  let yesFillId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+    '0',
+  ]);
 
-    let yesFill = new Fill(yesFillId);
-    yesFill.market = marketId.toString();
-    yesFill.venue = market.venue;
-    yesFill.outcome = BigInt.fromI32(0);
-    yesFill.side = 'SELL';
-    yesFill.tick = event.params.yesTick;
-    yesFill.amount = event.params.qty;
-    yesFill.cost = yesProceeds;
-    yesFill.fees = BigInt.fromI32(0);
-    yesFill.trader = yesOrder!.trader;
-    yesFill.tradeType = 'MergeFill';
-    yesFill.timestamp = event.block.timestamp;
-    yesFill.blockNumber = event.block.number;
-    yesFill.transactionHash = event.transaction.hash;
-    yesFill.save();
-  }
+  let yesFill = new Fill(yesFillId);
+  yesFill.market = marketId.toString();
+  yesFill.venue = market.venue;
+  yesFill.outcome = BigInt.fromI32(0);
+  yesFill.side = 'SELL';
+  yesFill.tick = event.params.yesTick;
+  yesFill.amount = event.params.qty;
+  yesFill.cost = yesProceeds;
+  yesFill.fees = BigInt.fromI32(0);
+  yesFill.trader = yesOrder != null ? yesOrder.trader : '';
+  yesFill.tradeType = 'MergeFill';
+  yesFill.timestamp = event.block.timestamp;
+  yesFill.blockNumber = event.block.number;
+  yesFill.transactionHash = event.transaction.hash;
+  yesFill.save();
 
-  if (noIsMaker) {
-    let noFillId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-      '1',
-    ]);
+  let noFillId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+    '1',
+  ]);
 
-    let noFill = new Fill(noFillId);
-    noFill.market = marketId.toString();
-    noFill.venue = market.venue;
-    noFill.outcome = BigInt.fromI32(1);
-    noFill.side = 'SELL';
-    noFill.tick = event.params.noTick;
-    noFill.amount = event.params.qty;
-    noFill.cost = noProceeds;
-    noFill.fees = BigInt.fromI32(0);
-    noFill.trader = noOrder!.trader;
-    noFill.tradeType = 'MergeFill';
-    noFill.timestamp = event.block.timestamp;
-    noFill.blockNumber = event.block.number;
-    noFill.transactionHash = event.transaction.hash;
-    noFill.save();
-  }
+  let noFill = new Fill(noFillId);
+  noFill.market = marketId.toString();
+  noFill.venue = market.venue;
+  noFill.outcome = BigInt.fromI32(1);
+  noFill.side = 'SELL';
+  noFill.tick = event.params.noTick;
+  noFill.amount = event.params.qty;
+  noFill.cost = noProceeds;
+  noFill.fees = BigInt.fromI32(0);
+  noFill.trader = noOrder != null ? noOrder.trader : '';
+  noFill.tradeType = 'MergeFill';
+  noFill.timestamp = event.block.timestamp;
+  noFill.blockNumber = event.block.number;
+  noFill.transactionHash = event.transaction.hash;
+  noFill.save();
 
   // Update YES order filled amount and trader position
   if (yesOrder != null) {
@@ -1649,8 +1611,7 @@ export function handleMergeFill(event: MergeFill): void {
 
   // MergeFill is NOT price discovery — do NOT update lastPriceTick
 
-  // Update market statistics (count volume once, not per outcome).
-  // NOTE: v1.6.0 behaviour restored — see handleOrderFilled comment.
+  // Update market statistics (count volume once, not per outcome)
   market.totalVolume = market.totalVolume.plus(event.params.qty);
   market.save();
 
