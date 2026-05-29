@@ -1117,96 +1117,82 @@ export function handleOrderFilled(event: OrderFilled): void {
     return;
   }
 
-  // Load buy / sell orders. orderId == 0 marks a market-taker side: the
-  // taker has no resting order, and the surrounding handleMarketOrderBuy /
-  // handleMarketOrderSell handler already created the Trade + Fill entity
-  // for that side. Skip the duplicate here so we don't emit ghost rows
-  // with empty trader fields.
+  // Load buy order
   let buyOrderId = event.params.buyOrderId;
   let buyOrder = Order.load(buyOrderId.toString());
+
+  // Load sell order
   let sellOrderId = event.params.sellOrderId;
   let sellOrder = Order.load(sellOrderId.toString());
-  let buyIsMaker = buyOrderId.gt(BigInt.fromI32(0)) && buyOrder != null;
-  let sellIsMaker = sellOrderId.gt(BigInt.fromI32(0)) && sellOrder != null;
 
   // Compute collateral cost: qty * priceTick * tickSize / 1e18
   let tickSize = market.tickSize;
   let collateralCost = event.params.qty.times(event.params.priceTick).times(tickSize).div(SCALE);
 
-  // Create market-level Trade entity only when BOTH sides are makers
-  // (= matching-engine normal cross). When one side is a market taker, the
-  // MarketOrderBuy / MarketOrderSell entity is the canonical user-facing
-  // trade record; emitting an extra OrderFill Trade here would duplicate.
-  if (buyIsMaker && sellIsMaker) {
-    let tradeId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-    ]);
+  // Create market-level Trade entity (one per match)
+  let tradeId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+  ]);
 
-    let trade = new Trade(tradeId);
-    trade.market = marketId.toString();
-    trade.outcome = event.params.outcomeId;
-    trade.tick = event.params.priceTick;
-    trade.amount = event.params.qty;
-    trade.cost = collateralCost;
-    trade.tradeType = 'OrderFill';
-    trade.buyTrader = buyOrder!.trader;
-    trade.sellTrader = sellOrder!.trader;
-    trade.timestamp = event.block.timestamp;
-    trade.blockNumber = event.block.number;
-    trade.transactionHash = event.transaction.hash;
-    trade.save();
-  }
+  let trade = new Trade(tradeId);
+  trade.market = marketId.toString();
+  trade.outcome = event.params.outcomeId;
+  trade.tick = event.params.priceTick;
+  trade.amount = event.params.qty;
+  trade.cost = collateralCost;
+  trade.tradeType = 'OrderFill';
+  trade.buyTrader = buyOrder != null ? buyOrder.trader : '';
+  trade.sellTrader = sellOrder != null ? sellOrder.trader : '';
+  trade.timestamp = event.block.timestamp;
+  trade.blockNumber = event.block.number;
+  trade.transactionHash = event.transaction.hash;
+  trade.save();
 
-  // Per-participant Fill entities — one per actual maker (skip the
-  // market-taker sides that the MarketOrderBuy/Sell handler covers).
-  if (buyIsMaker) {
-    let buyFillId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-      'buy',
-    ]);
+  // Create per-participant Fill entities (one per side)
+  let buyFillId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+    'buy',
+  ]);
 
-    let buyFill = new Fill(buyFillId);
-    buyFill.market = marketId.toString();
-    buyFill.venue = market.venue;
-    buyFill.outcome = event.params.outcomeId;
-    buyFill.side = 'BUY';
-    buyFill.tick = event.params.priceTick;
-    buyFill.amount = event.params.qty;
-    buyFill.cost = collateralCost;
-    buyFill.fees = BigInt.fromI32(0); // Tracked in FeesDistributed
-    buyFill.trader = buyOrder!.trader;
-    buyFill.tradeType = 'OrderFill';
-    buyFill.timestamp = event.block.timestamp;
-    buyFill.blockNumber = event.block.number;
-    buyFill.transactionHash = event.transaction.hash;
-    buyFill.save();
-  }
+  let buyFill = new Fill(buyFillId);
+  buyFill.market = marketId.toString();
+  buyFill.venue = market.venue;
+  buyFill.outcome = event.params.outcomeId;
+  buyFill.side = 'BUY';
+  buyFill.tick = event.params.priceTick;
+  buyFill.amount = event.params.qty;
+  buyFill.cost = collateralCost;
+  buyFill.fees = BigInt.fromI32(0); // Tracked in FeesDistributed
+  buyFill.trader = buyOrder != null ? buyOrder.trader : '';
+  buyFill.tradeType = 'OrderFill';
+  buyFill.timestamp = event.block.timestamp;
+  buyFill.blockNumber = event.block.number;
+  buyFill.transactionHash = event.transaction.hash;
+  buyFill.save();
 
-  if (sellIsMaker) {
-    let sellFillId = generateId([
-      event.transaction.hash.toHexString(),
-      event.logIndex.toString(),
-      'sell',
-    ]);
+  let sellFillId = generateId([
+    event.transaction.hash.toHexString(),
+    event.logIndex.toString(),
+    'sell',
+  ]);
 
-    let sellFill = new Fill(sellFillId);
-    sellFill.market = marketId.toString();
-    sellFill.venue = market.venue;
-    sellFill.outcome = event.params.outcomeId;
-    sellFill.side = 'SELL';
-    sellFill.tick = event.params.priceTick;
-    sellFill.amount = event.params.qty;
-    sellFill.cost = collateralCost;
-    sellFill.fees = BigInt.fromI32(0);
-    sellFill.trader = sellOrder!.trader;
-    sellFill.tradeType = 'OrderFill';
-    sellFill.timestamp = event.block.timestamp;
-    sellFill.blockNumber = event.block.number;
-    sellFill.transactionHash = event.transaction.hash;
-    sellFill.save();
-  }
+  let sellFill = new Fill(sellFillId);
+  sellFill.market = marketId.toString();
+  sellFill.venue = market.venue;
+  sellFill.outcome = event.params.outcomeId;
+  sellFill.side = 'SELL';
+  sellFill.tick = event.params.priceTick;
+  sellFill.amount = event.params.qty;
+  sellFill.cost = collateralCost;
+  sellFill.fees = BigInt.fromI32(0);
+  sellFill.trader = sellOrder != null ? sellOrder.trader : '';
+  sellFill.tradeType = 'OrderFill';
+  sellFill.timestamp = event.block.timestamp;
+  sellFill.blockNumber = event.block.number;
+  sellFill.transactionHash = event.transaction.hash;
+  sellFill.save();
 
   // Update buy order filled amount and trader position
   if (buyOrder != null) {
@@ -1268,9 +1254,7 @@ export function handleOrderFilled(event: OrderFilled): void {
     sellVenueStat.save();
   }
 
-  // Update market last trade prices (Normal fill = true price discovery).
-  // ALWAYS update — last-trade tracking is independent of double-count
-  // concerns (we always want the most-recent price tick).
+  // Update market last trade prices (Normal fill = true price discovery)
   if (event.params.outcomeId.equals(BigInt.fromI32(0))) {
     market.lastPriceTick_0 = event.params.priceTick;
     market.lastTradeTimestamp_0 = event.block.timestamp;
@@ -1281,30 +1265,23 @@ export function handleOrderFilled(event: OrderFilled): void {
   market.lastTradeTimestamp = event.block.timestamp;
   market.lastTradeOutcome = event.params.outcomeId.toI32();
 
-  // Volume statistics — only update when BOTH sides are makers
-  // (matching-engine fill). When one side is a market taker, the
-  // surrounding handleMarketOrderBuy / handleMarketOrderSell handler has
-  // already incremented market / venue / protocol totalVolume for this
-  // fill; doing it again here would double-count.
-  if (buyIsMaker && sellIsMaker) {
-    market.totalVolume = market.totalVolume.plus(event.params.qty);
-    market.save();
+  // Update market statistics
+  market.totalVolume = market.totalVolume.plus(event.params.qty);
+  market.save();
 
-    let venue = Venue.load(market.venue);
-    if (venue != null) {
-      venue.totalVolume = venue.totalVolume.plus(event.params.qty);
-      venue.updatedAt = event.block.timestamp;
-      venue.save();
-    }
-
-    let protocol = getOrCreateProtocol();
-    protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
-    protocol.updatedAt = event.block.timestamp;
-    protocol.save();
-  } else {
-    // Last-trade fields still need to be committed.
-    market.save();
+  // Update venue statistics
+  let venue = Venue.load(market.venue);
+  if (venue != null) {
+    venue.totalVolume = venue.totalVolume.plus(event.params.qty);
+    venue.updatedAt = event.block.timestamp;
+    venue.save();
   }
+
+  // Update protocol statistics
+  let protocol = getOrCreateProtocol();
+  protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
+  protocol.updatedAt = event.block.timestamp;
+  protocol.save();
 
   log.info('OrderFilled: buy={}, sell={}, market={}, outcome={}, qty={}, tick={}', [
     buyOrderId.toString(),
@@ -1492,9 +1469,7 @@ export function handleMintFill(event: MintFill): void {
     noVenueStat.save();
   }
 
-  // MintFill IS price discovery — update last trade prices for both outcomes.
-  // Always commit these, regardless of whether the fill is matching-engine
-  // or market-taker driven.
+  // MintFill IS price discovery — update last trade prices for both outcomes
   market.lastPriceTick_0 = event.params.yesTick;
   market.lastPriceTick_1 = event.params.noTick;
   market.lastTradeTimestamp = event.block.timestamp;
@@ -1502,28 +1477,23 @@ export function handleMintFill(event: MintFill): void {
   market.lastTradeTimestamp_1 = event.block.timestamp;
   market.lastTradeOutcome = 0; // Both outcomes traded; convention: report outcome 0
 
-  // Volume statistics — only update when BOTH sides are makers
-  // (matching-engine fill). When one side is a market taker, the
-  // surrounding handleMarketOrderBuy / handleMarketOrderSell handler has
-  // already incremented these totals.
-  if (yesIsMaker && noIsMaker) {
-    market.totalVolume = market.totalVolume.plus(event.params.qty);
-    market.save();
+  // Update market statistics (count volume once, not per outcome)
+  market.totalVolume = market.totalVolume.plus(event.params.qty);
+  market.save();
 
-    let mintVenue = Venue.load(market.venue);
-    if (mintVenue != null) {
-      mintVenue.totalVolume = mintVenue.totalVolume.plus(event.params.qty);
-      mintVenue.updatedAt = event.block.timestamp;
-      mintVenue.save();
-    }
-
-    let protocol = getOrCreateProtocol();
-    protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
-    protocol.updatedAt = event.block.timestamp;
-    protocol.save();
-  } else {
-    market.save();
+  // Update venue statistics
+  let mintVenue = Venue.load(market.venue);
+  if (mintVenue != null) {
+    mintVenue.totalVolume = mintVenue.totalVolume.plus(event.params.qty);
+    mintVenue.updatedAt = event.block.timestamp;
+    mintVenue.save();
   }
+
+  // Update protocol statistics
+  let protocol = getOrCreateProtocol();
+  protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
+  protocol.updatedAt = event.block.timestamp;
+  protocol.save();
 
   log.info('MintFill: market={}, qty={}, yesTick={}, noTick={}', [
     marketId.toString(),
@@ -1663,27 +1633,25 @@ export function handleMergeFill(event: MergeFill): void {
     noVenueStat.save();
   }
 
-  // MergeFill is NOT price discovery — do NOT update lastPriceTick.
+  // MergeFill is NOT price discovery — do NOT update lastPriceTick
 
-  // Volume statistics — only update when BOTH sides are makers
-  // (matching-engine merge). When one side is a market-taker SELL, the
-  // surrounding handleMarketOrderSell handler has already incremented these.
-  if (yesIsMaker && noIsMaker) {
-    market.totalVolume = market.totalVolume.plus(event.params.qty);
-    market.save();
+  // Update market statistics (count volume once, not per outcome)
+  market.totalVolume = market.totalVolume.plus(event.params.qty);
+  market.save();
 
-    let mergeVenue = Venue.load(market.venue);
-    if (mergeVenue != null) {
-      mergeVenue.totalVolume = mergeVenue.totalVolume.plus(event.params.qty);
-      mergeVenue.updatedAt = event.block.timestamp;
-      mergeVenue.save();
-    }
-
-    let protocol = getOrCreateProtocol();
-    protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
-    protocol.updatedAt = event.block.timestamp;
-    protocol.save();
+  // Update venue statistics
+  let mergeVenue = Venue.load(market.venue);
+  if (mergeVenue != null) {
+    mergeVenue.totalVolume = mergeVenue.totalVolume.plus(event.params.qty);
+    mergeVenue.updatedAt = event.block.timestamp;
+    mergeVenue.save();
   }
+
+  // Update protocol statistics
+  let protocol = getOrCreateProtocol();
+  protocol.totalVolume = protocol.totalVolume.plus(event.params.qty);
+  protocol.updatedAt = event.block.timestamp;
+  protocol.save();
 
   log.info('MergeFill: market={}, qty={}, yesTick={}, noTick={}', [
     marketId.toString(),
