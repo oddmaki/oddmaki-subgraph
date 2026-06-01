@@ -145,7 +145,8 @@ type PriceMarketSerie @entity(immutable: false) {
   currentMarket: Market # Next-to-resolve unresolved market in the series
   status: MarketStatus! # Derived from currentMarket (Active while any unresolved, Resolved otherwise)
   tags: [String!]! # Tags from the currentMarket (so filter tags like "crypto" surface)
-  marketIds: [String!]! # Stored array of market IDs in this series (for handler iteration)
+  marketIds: [String!]! # Full history of market IDs in this series (for client pagination)
+  unresolvedMarketIds: [String!]! # Active set: created-but-unresolved windows. Pruned on resolution so the currentMarket scan stays O(open windows), not O(all history).
   createdAt: BigInt! # Block timestamp when series was first seen
   updatedAt: BigInt! # Last update timestamp
   markets: [Market!]! @derivedFrom(field: "priceSeries")

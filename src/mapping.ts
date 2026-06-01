@@ -246,10 +246,29 @@ function getOrCreatePriceMarketSerie(
   series.status = 'Active';
   series.tags = [];
   series.marketIds = [];
+  series.unresolvedMarketIds = [];
   series.createdAt = timestamp;
   series.updatedAt = timestamp;
   series.save();
   return series;
+}
+
+/** Append `id` to `arr` if not already present. Returns the same array. */
+function pushUnique(arr: string[], id: string): string[] {
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] == id) return arr;
+  }
+  arr.push(id);
+  return arr;
+}
+
+/** Return a new array with every occurrence of `id` removed. */
+function removeFromArray(arr: string[], id: string): string[] {
+  let out: string[] = [];
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] != id) out.push(arr[i]);
+  }
+  return out;
 }
 
 /**
@@ -272,7 +291,11 @@ function findNextCurrentMarket(
   let liveCloseTime: BigInt = BigInt.zero();
   let fallbackId: string | null = null;
   let fallbackCloseTime: BigInt = BigInt.zero();
-  let marketIds = series.marketIds;
+  // Scan only the active set (created-but-unresolved windows), not the full
+  // history. Resolved windows are pruned on resolution, so for a short-interval
+  // series this is O(1-2) instead of O(all windows ever). The status guard is
+  // kept as a defensive backstop in case a stale id slips through.
+  let marketIds = series.unresolvedMarketIds;
   for (let i = 0; i < marketIds.length; i++) {
     let mId = marketIds[i];
     let m = Market.load(mId);
@@ -348,12 +371,11 @@ function reconcileMarketSeries(market: Market, timestamp: BigInt): void {
   if (oldEntityId != null) {
     let oldSeries = PriceMarketSerie.load(oldEntityId as string);
     if (oldSeries != null) {
-      let ids = oldSeries.marketIds;
-      let filtered: string[] = [];
-      for (let i = 0; i < ids.length; i++) {
-        if (ids[i] != market.id) filtered.push(ids[i]);
-      }
-      oldSeries.marketIds = filtered;
+      oldSeries.marketIds = removeFromArray(oldSeries.marketIds, market.id);
+      oldSeries.unresolvedMarketIds = removeFromArray(
+        oldSeries.unresolvedMarketIds,
+        market.id,
+      );
       refreshSeriesCurrent(oldSeries, timestamp);
     }
     market.priceSeries = null;
@@ -366,17 +388,14 @@ function reconcileMarketSeries(market: Market, timestamp: BigInt): void {
       newSeriesKey as string,
       timestamp,
     );
-    let ids = newSeries.marketIds;
-    let exists = false;
-    for (let i = 0; i < ids.length; i++) {
-      if (ids[i] == market.id) {
-        exists = true;
-        break;
-      }
-    }
-    if (!exists) {
-      ids.push(market.id);
-      newSeries.marketIds = ids;
+    newSeries.marketIds = pushUnique(newSeries.marketIds, market.id);
+    // Only unresolved windows belong in the active set the currentMarket scan
+    // walks. (Tag edits can reconcile an already-resolved market.)
+    if (market.status != 'Resolved' && market.status != 'Invalid') {
+      newSeries.unresolvedMarketIds = pushUnique(
+        newSeries.unresolvedMarketIds,
+        market.id,
+      );
     }
     market.priceSeries = newSeries.id;
     refreshSeriesCurrent(newSeries, timestamp);
@@ -2146,6 +2165,12 @@ export function handleMarketResolved(event: MarketResolved): void {
   if (market.priceSeries != null) {
     let series = PriceMarketSerie.load(market.priceSeries as string);
     if (series != null) {
+      // Prune the now-resolved window from the active set so the currentMarket
+      // scan never walks it again. This is what keeps the scan O(open windows).
+      series.unresolvedMarketIds = removeFromArray(
+        series.unresolvedMarketIds,
+        market.id,
+      );
       refreshSeriesCurrent(series, event.block.timestamp);
     }
   }
