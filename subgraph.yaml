@@ -138,6 +138,21 @@ dataSources:
           handler: handleMarketMetadataUpdated
         - event: MarketGroupMetadataUpdated(indexed uint256,string)
           handler: handleMarketGroupMetadataUpdated
+        # DPM (Dynamic Pari-Mutuel) Markets
+        - event: DpmMarketCreated(indexed uint256,indexed uint256,indexed address,uint256,uint256,uint256)
+          handler: handleDpmMarketCreated
+        - event: DpmPoolSeeded(indexed uint256,uint256[],uint256[])
+          handler: handleDpmPoolSeeded
+        - event: DpmIntentEntered(indexed uint256,indexed address,uint256,uint256)
+          handler: handleDpmIntentEntered
+        - event: DpmIntentExited(indexed uint256,indexed address,uint256,uint256)
+          handler: handleDpmIntentExited
+        - event: DpmEntered(indexed uint256,indexed address,uint256,uint256,uint256,uint256,uint256)
+          handler: handleDpmEntered
+        - event: DpmClaimed(indexed uint256,indexed address,uint256)
+          handler: handleDpmClaimed
+        - event: DpmOutcomeAdded(indexed uint256,uint256,string,bytes32,uint256)
+          handler: handleDpmOutcomeAdded
         # Vault: user-initiated split/merge
         - event: PositionSplit(indexed address,indexed uint256,uint256)
           handler: handlePositionSplit

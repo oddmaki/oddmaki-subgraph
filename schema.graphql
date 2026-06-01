@@ -92,6 +92,9 @@ type Market @entity(immutable: false) {
   isPriceMarket: Boolean! # True if this is a Pyth price market
   priceMarket: PriceMarket # Pyth price market overlay (null if not a price market)
   priceSeries: PriceMarketSerie # Series this market belongs to (null unless tagged "price-market" + "series:<key>")
+  # DPM (Dynamic Pari-Mutuel) Market
+  isDpmMarket: Boolean! # True if this market trades via the DPM pool (not the CLOB)
+  dpmMarket: DpmMarket # DPM pool overlay (null if not a DPM market)
   # Timestamps
   createdAt: BigInt! # Block timestamp
   createdAtBlock: BigInt! # Block number
@@ -146,6 +149,83 @@ type PriceMarketSerie @entity(immutable: false) {
   createdAt: BigInt! # Block timestamp when series was first seen
   updatedAt: BigInt! # Last update timestamp
   markets: [Market!]! @derivedFrom(field: "priceSeries")
+}
+
+# ============================================
+# DPM (Dynamic Pari-Mutuel) Market Entities — Pennock 2004 §4 ("DPM I")
+# A self-funded trading mode parallel to the CLOB: pick a side, deposit
+# collateral, price moves with flow. DPM markets reuse the CTF condition only
+# for resolution; the pool holds no outcome tokens. The load-bearing invariant
+# is `Σ DpmOutcome.collateral == collateral in custody`.
+# ============================================
+
+type DpmMarket @entity(immutable: false) {
+  id: ID! # marketId as string
+  market: Market!
+  outcomeCount: BigInt! # number of outcomes (2 for binary/price; N for categorical)
+  # Lifecycle window (openTime == 0 sentinel is resolved to the creation block timestamp on-chain)
+  openTime: BigInt! # dynamic pricing begins; before it, enterIntent/exitIntent are 1:1 refundable
+  closeTime: BigInt! # trading ends; resolution happens after this
+  # Pool transition
+  poolInitialized: Boolean! # intent -> DPM pool seed performed (M/N seeded from intent totals)
+  seededAt: BigInt # timestamp of the DpmPoolSeeded event (null until seeded)
+  # Resolution (DPM has no resolve of its own — mirrors the shared MarketResolved hook)
+  resolved: Boolean!
+  winningOutcome: Int # winning outcome index (null until resolved; null for invalid/no-contest)
+  resolvedAt: BigInt
+  # Live aggregate pool stats
+  totalCollateral: BigInt! # Σ M_i across outcomes (== collateral in custody once seeded)
+  totalShares: BigInt! # Σ N_i across outcomes
+  totalIntent: BigInt! # Σ refundable intent stake currently held (pre-seed)
+  totalClaimed: BigInt! # Σ payouts distributed at claim
+  uniqueTraders: BigInt!
+  # Relationships
+  outcomes: [DpmOutcome!]! @derivedFrom(field: "dpmMarket")
+  positions: [DpmPosition!]! @derivedFrom(field: "dpmMarket")
+  # Timestamps
+  createdAt: BigInt!
+  updatedAt: BigInt!
+}
+
+type DpmOutcome @entity(immutable: false) {
+  id: ID! # "marketId-outcomeIndex"
+  dpmMarket: DpmMarket!
+  market: Market!
+  outcomeIndex: BigInt!
+  label: String! # outcome label (e.g. "Yes"/"No"/"Up"/a candidate name)
+  conditionId: Bytes! # current CTF condition (changes when an outcome is added late)
+  # Live pool state (Pennock M_i / N_i)
+  collateral: BigInt! # M_i — collateral backing this outcome
+  shares: BigInt! # N_i — shares outstanding on this outcome
+  intentTotal: BigInt! # refundable intent stake on this outcome (pre-seed)
+  # Lifecycle
+  isWinner: Boolean # set at resolution
+  addedLate: Boolean! # true if appended via addDpmOutcome after creation
+  createdAt: BigInt!
+  updatedAt: BigInt!
+}
+
+type DpmPosition @entity(immutable: false) {
+  id: ID! # "traderAddress-marketId-outcomeIndex"
+  trader: User!
+  dpmMarket: DpmMarket!
+  market: Market!
+  venue: Venue! # denormalized for venue-level leaderboard queries
+  outcome: DpmOutcome!
+  outcomeIndex: BigInt!
+  # Intent phase
+  intentStake: BigInt! # current refundable intent stake (before openTime); folds 1:1 into shares at seed
+  # Effective holdings (intent-converted + dynamic-pool entries)
+  shares: BigInt! # total effective shares = intentStake (par-converted) + Σ dynamic shares minted
+  collateralIn: BigInt! # total gross collateral the trader put in (intent net of exits + Σ enter amounts)
+  entryCount: BigInt! # number of dynamic enter() calls
+  # Claim
+  claimed: Boolean!
+  payout: BigInt! # collateral received at claim (0 until claimed)
+  realizedPnL: BigInt! # payout - collateralIn (set at claim)
+  # Timestamps
+  firstSeenAt: BigInt!
+  lastUpdatedAt: BigInt!
 }
 
 enum MarketStatus {

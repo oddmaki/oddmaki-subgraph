@@ -53,6 +53,13 @@ import {
   PositionsMerged,
   PriceMarketCreatedPyth,
   PriceMarketResolvedPyth,
+  DpmMarketCreated,
+  DpmPoolSeeded,
+  DpmIntentEntered,
+  DpmIntentExited,
+  DpmEntered,
+  DpmClaimed,
+  DpmOutcomeAdded,
   ProtocolFeeBpsUpdated,
   OrderAutoCancelled,
   OddMaki,
@@ -78,6 +85,9 @@ import {
   ConditionMarket,
   PriceMarket,
   PriceMarketSerie,
+  DpmMarket,
+  DpmOutcome,
+  DpmPosition,
 } from '../generated/schema';
 import {
   getOrCreateUser,
@@ -638,6 +648,7 @@ export function handleMarketCreated(event: MarketCreated): void {
     market.uniqueTraders = BigInt.fromI32(0);
     market.tags = [];
     market.isPriceMarket = false;
+    market.isDpmMarket = false;
     market.createdAt = event.block.timestamp;
     market.createdAtBlock = event.block.number;
   }
@@ -2114,6 +2125,13 @@ export function handleMarketResolved(event: MarketResolved): void {
   market.resolvedAt = event.block.timestamp;
   market.save();
 
+  // DPM markets resolve through this same shared hook (they own no resolve path —
+  // they reuse the CTF condition that UMA/Pyth write). Mirror the winner onto the
+  // DPM overlay. outcomeIndex == -1 (no matching string) reads as invalid/no-contest.
+  if (market.isDpmMarket) {
+    syncDpmResolution(marketId, outcomeIndex, event.block.timestamp);
+  }
+
   // Update venue statistics (decrease active markets only if market was Active)
   if (wasActive) {
     let venue = Venue.load(market.venue);
@@ -2484,3 +2502,393 @@ export function handlePriceMarketResolvedPyth(event: PriceMarketResolvedPyth): v
   ]);
 }
 
+
+// ============================================
+// DPM (Dynamic Pari-Mutuel) Markets
+// Pennock 2004 §4 ("DPM I"). DPM markets also fire the base MarketCreated (→ Market
+// entity) and, for price variants, PriceMarketCreatedPyth. The handlers below maintain
+// the DPM overlay: pool state per outcome (M_i / N_i), per-user positions, and claims.
+// Resolution is synced from the shared handleMarketResolved hook (DPM owns no resolve).
+// ============================================
+
+const DPM_ONE: BigInt = BigInt.fromI32(1);
+
+/** Increment dpm.uniqueTraders the first time a trader touches this DPM market. */
+function trackDpmTrader(dpm: DpmMarket, traderId: string, timestamp: BigInt): void {
+  let id = dpm.id + '-' + traderId;
+  if (MarketTrader.load(id) != null) return;
+  let mt = new MarketTrader(id);
+  mt.market = dpm.id;
+  mt.trader = traderId;
+  mt.firstTradeAt = timestamp;
+  mt.save();
+  dpm.uniqueTraders = dpm.uniqueTraders.plus(DPM_ONE);
+}
+
+/** Load-or-create a per-(trader, market, outcome) DPM position. */
+function getOrCreateDpmPosition(
+  dpm: DpmMarket,
+  market: Market,
+  traderAddress: Address,
+  outcomeIndex: BigInt,
+  timestamp: BigInt,
+): DpmPosition {
+  let traderId = traderAddress.toHexString();
+  let id = traderId + '-' + dpm.id + '-' + outcomeIndex.toString();
+  let pos = DpmPosition.load(id);
+  if (pos != null) return pos;
+
+  trackDpmTrader(dpm, traderId, timestamp);
+
+  pos = new DpmPosition(id);
+  pos.trader = traderId;
+  pos.dpmMarket = dpm.id;
+  pos.market = market.id;
+  pos.venue = market.venue;
+  pos.outcome = dpm.id + '-' + outcomeIndex.toString();
+  pos.outcomeIndex = outcomeIndex;
+  pos.intentStake = BigInt.zero();
+  pos.shares = BigInt.zero();
+  pos.collateralIn = BigInt.zero();
+  pos.entryCount = BigInt.zero();
+  pos.claimed = false;
+  pos.payout = BigInt.zero();
+  pos.realizedPnL = BigInt.zero();
+  pos.firstSeenAt = timestamp;
+  pos.lastUpdatedAt = timestamp;
+  pos.save();
+  return pos;
+}
+
+/** Mirror the winner from the shared resolution path onto the DPM overlay. */
+function syncDpmResolution(marketId: BigInt, outcomeIndex: i32, timestamp: BigInt): void {
+  let dpm = DpmMarket.load(marketId.toString());
+  if (dpm == null) return;
+
+  dpm.resolved = true;
+  // outcomeIndex < 0 means no winning string matched (invalid / no-contest) — leave
+  // winningOutcome unset (null) so clients render a void rather than "outcome 0 won".
+  if (outcomeIndex >= 0) {
+    dpm.winningOutcome = outcomeIndex;
+    let oc = DpmOutcome.load(marketId.toString() + '-' + outcomeIndex.toString());
+    if (oc != null) {
+      oc.isWinner = true;
+      oc.updatedAt = timestamp;
+      oc.save();
+    }
+  }
+  dpm.resolvedAt = timestamp;
+  dpm.updatedAt = timestamp;
+  dpm.save();
+}
+
+export function handleDpmMarketCreated(event: DpmMarketCreated): void {
+  let marketId = event.params.marketId;
+  let market = Market.load(marketId.toString());
+  if (market == null) {
+    log.warning('Market {} not found for DpmMarketCreated', [marketId.toString()]);
+    return;
+  }
+
+  market.isDpmMarket = true;
+
+  let dpm = new DpmMarket(marketId.toString());
+  dpm.market = marketId.toString();
+  dpm.outcomeCount = event.params.outcomeCount;
+  dpm.openTime = event.params.openTime;
+  dpm.closeTime = event.params.closeTime;
+  dpm.poolInitialized = false;
+  dpm.resolved = false;
+  dpm.totalCollateral = BigInt.zero();
+  dpm.totalShares = BigInt.zero();
+  dpm.totalIntent = BigInt.zero();
+  dpm.totalClaimed = BigInt.zero();
+  dpm.uniqueTraders = BigInt.zero();
+  dpm.createdAt = event.block.timestamp;
+  dpm.updatedAt = event.block.timestamp;
+  dpm.save();
+
+  market.dpmMarket = dpm.id;
+  market.save();
+
+  // Seed DpmOutcome rows from the base market's labels + condition.
+  let outcomes = market.outcomes;
+  let count = event.params.outcomeCount.toI32();
+  for (let i = 0; i < count; i++) {
+    let oc = new DpmOutcome(marketId.toString() + '-' + i.toString());
+    oc.dpmMarket = dpm.id;
+    oc.market = marketId.toString();
+    oc.outcomeIndex = BigInt.fromI32(i);
+    oc.label = i < outcomes.length ? outcomes[i] : '';
+    oc.conditionId = market.conditionId;
+    oc.collateral = BigInt.zero();
+    oc.shares = BigInt.zero();
+    oc.intentTotal = BigInt.zero();
+    oc.addedLate = false;
+    oc.createdAt = event.block.timestamp;
+    oc.updatedAt = event.block.timestamp;
+    oc.save();
+  }
+
+  log.info('DpmMarketCreated: market {} outcomeCount {} open {} close {}', [
+    marketId.toString(),
+    event.params.outcomeCount.toString(),
+    event.params.openTime.toString(),
+    event.params.closeTime.toString(),
+  ]);
+}
+
+export function handleDpmPoolSeeded(event: DpmPoolSeeded): void {
+  let marketId = event.params.marketId;
+  let dpm = DpmMarket.load(marketId.toString());
+  if (dpm == null) {
+    log.warning('DpmMarket {} not found for DpmPoolSeeded', [marketId.toString()]);
+    return;
+  }
+
+  let collateral = event.params.collateral;
+  let shares = event.params.shares;
+  let totalC = BigInt.zero();
+  let totalS = BigInt.zero();
+  for (let i = 0; i < collateral.length; i++) {
+    let oc = DpmOutcome.load(marketId.toString() + '-' + i.toString());
+    if (oc != null) {
+      oc.collateral = collateral[i];
+      oc.shares = i < shares.length ? shares[i] : BigInt.zero();
+      oc.updatedAt = event.block.timestamp;
+      oc.save();
+    }
+    totalC = totalC.plus(collateral[i]);
+    if (i < shares.length) totalS = totalS.plus(shares[i]);
+  }
+
+  dpm.poolInitialized = true;
+  dpm.seededAt = event.block.timestamp;
+  dpm.totalCollateral = totalC;
+  dpm.totalShares = totalS;
+  dpm.updatedAt = event.block.timestamp;
+  dpm.save();
+
+  log.info('DpmPoolSeeded: market {} totalCollateral {} totalShares {}', [
+    marketId.toString(),
+    totalC.toString(),
+    totalS.toString(),
+  ]);
+}
+
+export function handleDpmIntentEntered(event: DpmIntentEntered): void {
+  let marketId = event.params.marketId;
+  let dpm = DpmMarket.load(marketId.toString());
+  let market = Market.load(marketId.toString());
+  if (dpm == null || market == null) {
+    log.warning('DPM market {} not found for DpmIntentEntered', [marketId.toString()]);
+    return;
+  }
+
+  let amount = event.params.amount;
+  let outcomeIdx = event.params.outcome;
+  getOrCreateUser(event.params.user, event.block.timestamp);
+
+  let pos = getOrCreateDpmPosition(dpm, market, event.params.user, outcomeIdx, event.block.timestamp);
+  // Intent folds 1:1 into shares at the par seed, so mirror it into both basis and shares.
+  pos.intentStake = pos.intentStake.plus(amount);
+  pos.shares = pos.shares.plus(amount);
+  pos.collateralIn = pos.collateralIn.plus(amount);
+  pos.lastUpdatedAt = event.block.timestamp;
+  pos.save();
+
+  let oc = DpmOutcome.load(marketId.toString() + '-' + outcomeIdx.toString());
+  if (oc != null) {
+    oc.intentTotal = oc.intentTotal.plus(amount);
+    oc.updatedAt = event.block.timestamp;
+    oc.save();
+  }
+
+  dpm.totalIntent = dpm.totalIntent.plus(amount);
+  dpm.updatedAt = event.block.timestamp;
+  dpm.save();
+}
+
+export function handleDpmIntentExited(event: DpmIntentExited): void {
+  let marketId = event.params.marketId;
+  let dpm = DpmMarket.load(marketId.toString());
+  let market = Market.load(marketId.toString());
+  if (dpm == null || market == null) {
+    log.warning('DPM market {} not found for DpmIntentExited', [marketId.toString()]);
+    return;
+  }
+
+  let amount = event.params.amount;
+  let outcomeIdx = event.params.outcome;
+
+  let pos = getOrCreateDpmPosition(dpm, market, event.params.user, outcomeIdx, event.block.timestamp);
+  pos.intentStake = pos.intentStake.minus(amount);
+  pos.shares = pos.shares.minus(amount);
+  pos.collateralIn = pos.collateralIn.minus(amount);
+  pos.lastUpdatedAt = event.block.timestamp;
+  pos.save();
+
+  let oc = DpmOutcome.load(marketId.toString() + '-' + outcomeIdx.toString());
+  if (oc != null) {
+    oc.intentTotal = oc.intentTotal.minus(amount);
+    oc.updatedAt = event.block.timestamp;
+    oc.save();
+  }
+
+  dpm.totalIntent = dpm.totalIntent.minus(amount);
+  dpm.updatedAt = event.block.timestamp;
+  dpm.save();
+}
+
+export function handleDpmEntered(event: DpmEntered): void {
+  let marketId = event.params.marketId;
+  let dpm = DpmMarket.load(marketId.toString());
+  let market = Market.load(marketId.toString());
+  if (dpm == null || market == null) {
+    log.warning('DPM market {} not found for DpmEntered', [marketId.toString()]);
+    return;
+  }
+
+  let outcomeIdx = event.params.outcome;
+  getOrCreateUser(event.params.user, event.block.timestamp);
+
+  let pos = getOrCreateDpmPosition(dpm, market, event.params.user, outcomeIdx, event.block.timestamp);
+  pos.shares = pos.shares.plus(event.params.shares);
+  pos.collateralIn = pos.collateralIn.plus(event.params.amount);
+  pos.entryCount = pos.entryCount.plus(DPM_ONE);
+  pos.lastUpdatedAt = event.block.timestamp;
+  pos.save();
+
+  // Refresh this outcome's live pool state from the post-trade snapshot and carry the
+  // delta into the market aggregates (only the entered outcome moved).
+  let oc = DpmOutcome.load(marketId.toString() + '-' + outcomeIdx.toString());
+  if (oc != null) {
+    let prevC = oc.collateral;
+    let prevS = oc.shares;
+    oc.collateral = event.params.newCollateral;
+    oc.shares = event.params.newShares;
+    oc.updatedAt = event.block.timestamp;
+    oc.save();
+    dpm.totalCollateral = dpm.totalCollateral.plus(event.params.newCollateral.minus(prevC));
+    dpm.totalShares = dpm.totalShares.plus(event.params.newShares.minus(prevS));
+  }
+  dpm.updatedAt = event.block.timestamp;
+  dpm.save();
+}
+
+export function handleDpmClaimed(event: DpmClaimed): void {
+  let marketId = event.params.marketId;
+  let dpm = DpmMarket.load(marketId.toString());
+  if (dpm == null) {
+    log.warning('DpmMarket {} not found for DpmClaimed', [marketId.toString()]);
+    return;
+  }
+
+  let userAddr = event.params.user.toHexString();
+  let payout = event.params.payout;
+
+  // Claim is market-wide (all of the user's outcomes settle at once); the event carries
+  // no per-outcome split. Mark every position claimed and total the cost basis.
+  let count = dpm.outcomeCount.toI32();
+  let totalBasis = BigInt.zero();
+  for (let i = 0; i < count; i++) {
+    let p = DpmPosition.load(userAddr + '-' + marketId.toString() + '-' + i.toString());
+    if (p != null) {
+      totalBasis = totalBasis.plus(p.collateralIn);
+      p.claimed = true;
+      p.lastUpdatedAt = event.block.timestamp;
+      p.save();
+    }
+  }
+
+  // Attribute the market-wide payout + realized P&L to a single row: the winning
+  // outcome if resolved with one, else outcome 0 (invalid / no-contest refund).
+  let attrIdx = dpm.winningOutcome; // 0 when unset
+  let attrPos = DpmPosition.load(userAddr + '-' + marketId.toString() + '-' + attrIdx.toString());
+  let realized = payout.minus(totalBasis);
+  if (attrPos != null) {
+    attrPos.payout = payout;
+    attrPos.realizedPnL = realized;
+    attrPos.lastUpdatedAt = event.block.timestamp;
+    attrPos.save();
+  }
+
+  dpm.totalClaimed = dpm.totalClaimed.plus(payout);
+  dpm.updatedAt = event.block.timestamp;
+  dpm.save();
+
+  let user = getOrCreateUser(event.params.user, event.block.timestamp);
+  user.totalRealizedPnL = user.totalRealizedPnL.plus(realized);
+  user.save();
+
+  log.info('DpmClaimed: market {} user {} payout {}', [
+    marketId.toString(),
+    userAddr,
+    payout.toString(),
+  ]);
+}
+
+export function handleDpmOutcomeAdded(event: DpmOutcomeAdded): void {
+  let marketId = event.params.marketId;
+  let dpm = DpmMarket.load(marketId.toString());
+  let market = Market.load(marketId.toString());
+  if (dpm == null || market == null) {
+    log.warning('DPM market {} not found for DpmOutcomeAdded', [marketId.toString()]);
+    return;
+  }
+
+  let outcomeIndex = event.params.outcomeIndex;
+  let newConditionId = event.params.newConditionId;
+
+  // Append the new outcome row.
+  let oc = new DpmOutcome(marketId.toString() + '-' + outcomeIndex.toString());
+  oc.dpmMarket = dpm.id;
+  oc.market = marketId.toString();
+  oc.outcomeIndex = outcomeIndex;
+  oc.label = event.params.label;
+  oc.conditionId = newConditionId;
+  oc.collateral = BigInt.zero();
+  oc.shares = BigInt.zero();
+  oc.intentTotal = BigInt.zero();
+  oc.addedLate = true;
+  oc.createdAt = event.block.timestamp;
+  oc.updatedAt = event.block.timestamp;
+  oc.save();
+
+  // The condition id changes when an outcome is added; refresh it everywhere it's
+  // denormalized (the market, existing outcome rows) so resolution still resolves.
+  dpm.outcomeCount = event.params.newOutcomeCount;
+  dpm.updatedAt = event.block.timestamp;
+  dpm.save();
+
+  let total = event.params.newOutcomeCount.toI32();
+  for (let i = 0; i < total; i++) {
+    let row = DpmOutcome.load(marketId.toString() + '-' + i.toString());
+    if (row != null) {
+      row.conditionId = newConditionId;
+      row.updatedAt = event.block.timestamp;
+      row.save();
+    }
+  }
+
+  // Mirror the new label + condition onto the base Market entity.
+  let labels = market.outcomes;
+  let nextLabels = new Array<string>();
+  for (let i = 0; i < labels.length; i++) {
+    nextLabels.push(labels[i]);
+  }
+  if (outcomeIndex.toI32() >= labels.length) {
+    nextLabels.push(event.params.label);
+  }
+  market.outcomes = nextLabels;
+  market.outcomeSlotCount = event.params.newOutcomeCount;
+  market.conditionId = newConditionId;
+  market.save();
+
+  log.info('DpmOutcomeAdded: market {} index {} label {} newCount {}', [
+    marketId.toString(),
+    outcomeIndex.toString(),
+    event.params.label,
+    event.params.newOutcomeCount.toString(),
+  ]);
+}
