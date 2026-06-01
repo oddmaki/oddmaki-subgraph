@@ -243,12 +243,25 @@ function getOrCreatePriceMarketSerie(
 }
 
 /**
- * Find the next-to-resolve unresolved market in a series (smallest closeTime among
- * markets with status != Resolved/Invalid). Returns the market id or null.
+ * Pick the "current" unresolved market for a series, preferring the one that is
+ * actually live right now.
+ *
+ * A window that has closed but whose Pyth resolution still lags keeps status
+ * != Resolved for a short while. By closeTime alone that stale window would
+ * shadow the window that is already open and tradeable, so clients (e.g. the
+ * grid card) would route to a closed market. We therefore prefer, in order:
+ *   1. the live market — openTime <= now < closeTime — soonest-closing if many;
+ *   2. otherwise the earliest-closing unresolved market (next to resolve, or
+ *      the next upcoming window when nothing is open yet).
  */
-function findNextCurrentMarket(series: PriceMarketSerie): string | null {
-  let bestId: string | null = null;
-  let bestCloseTime: BigInt = BigInt.zero();
+function findNextCurrentMarket(
+  series: PriceMarketSerie,
+  timestamp: BigInt,
+): string | null {
+  let liveId: string | null = null;
+  let liveCloseTime: BigInt = BigInt.zero();
+  let fallbackId: string | null = null;
+  let fallbackCloseTime: BigInt = BigInt.zero();
   let marketIds = series.marketIds;
   for (let i = 0; i < marketIds.length; i++) {
     let mId = marketIds[i];
@@ -257,12 +270,20 @@ function findNextCurrentMarket(series: PriceMarketSerie): string | null {
     if (m.status == 'Resolved' || m.status == 'Invalid') continue;
     let pm = PriceMarket.load(mId);
     if (pm == null) continue;
-    if (bestId == null || pm.closeTime.lt(bestCloseTime)) {
-      bestId = mId;
-      bestCloseTime = pm.closeTime;
+
+    if (fallbackId == null || pm.closeTime.lt(fallbackCloseTime)) {
+      fallbackId = mId;
+      fallbackCloseTime = pm.closeTime;
+    }
+
+    let isLive =
+      pm.openTime.le(timestamp) && pm.closeTime.gt(timestamp);
+    if (isLive && (liveId == null || pm.closeTime.lt(liveCloseTime))) {
+      liveId = mId;
+      liveCloseTime = pm.closeTime;
     }
   }
-  return bestId;
+  return liveId != null ? liveId : fallbackId;
 }
 
 /**
@@ -271,7 +292,7 @@ function findNextCurrentMarket(series: PriceMarketSerie): string | null {
  * resolution).
  */
 function refreshSeriesCurrent(series: PriceMarketSerie, timestamp: BigInt): void {
-  let nextId = findNextCurrentMarket(series);
+  let nextId = findNextCurrentMarket(series, timestamp);
   if (nextId == null) {
     series.currentMarket = null;
     series.status = 'Resolved';
