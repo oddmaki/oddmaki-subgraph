@@ -2707,14 +2707,20 @@ export function handleDpmEntered(event: DpmEntered): void {
   dpm.updatedAt = event.block.timestamp;
   dpm.save();
 
-  // Snapshot the entry for the odds chart + activity feed. impliedYesPct is
-  // outcome 0's share of the pool right after this entry (binary markets; for
-  // N-outcome it's still outcome 0's share, which clients can extend later).
-  let yesOutcome = DpmOutcome.load(marketId.toString() + '-0');
-  let yesCollateral = yesOutcome != null ? yesOutcome.collateral : BigInt.zero();
-  let impliedYes = dpm.totalCollateral.gt(BigInt.zero())
-    ? yesCollateral.times(BigInt.fromI32(100)).div(dpm.totalCollateral).toI32()
-    : 50;
+  // Snapshot every outcome's implied odds right after this entry — one chart
+  // line per outcome. Cost is O(outcomeCount) (≤ MAX_OUTCOMES), independent of
+  // history, on a low-frequency event, so it doesn't degrade the indexer.
+  let pcts: Array<i32> = [];
+  let ocCount = dpm.outcomeCount.toI32();
+  for (let i = 0; i < ocCount; i++) {
+    let o = DpmOutcome.load(marketId.toString() + '-' + i.toString());
+    let coll = o != null ? o.collateral : BigInt.zero();
+    pcts.push(
+      dpm.totalCollateral.gt(BigInt.zero())
+        ? coll.times(BigInt.fromI32(100)).div(dpm.totalCollateral).toI32()
+        : (ocCount > 0 ? 100 / ocCount : 0),
+    );
+  }
 
   let entry = new DpmEntry(
     event.transaction.hash.toHexString() + '-' + event.logIndex.toString(),
@@ -2726,7 +2732,8 @@ export function handleDpmEntered(event: DpmEntered): void {
   entry.outcomeLabel = oc != null ? oc.label : '';
   entry.amount = event.params.amount;
   entry.shares = event.params.shares;
-  entry.impliedYesPct = impliedYes;
+  entry.impliedYesPct = pcts.length > 0 ? pcts[0] : 50;
+  entry.impliedPcts = pcts;
   entry.totalCollateral = dpm.totalCollateral;
   entry.timestamp = event.block.timestamp;
   entry.blockNumber = event.block.number;

@@ -240,7 +240,8 @@ type DpmEntry @entity(immutable: true) {
   outcomeLabel: String! # entered outcome label (for activity display)
   amount: BigInt! # collateral deposited (gross)
   shares: BigInt! # shares minted
-  impliedYesPct: Int! # outcome 0's share of the pool right after this entry (for the odds chart)
+  impliedYesPct: Int! # outcome 0's share of the pool right after this entry (binary convenience = impliedPcts[0])
+  impliedPcts: [Int!]! # every outcome's share of the pool right after this entry (one chart line per outcome)
   totalCollateral: BigInt! # pool total after the entry
   timestamp: BigInt!
   blockNumber: BigInt!
