@@ -85,6 +85,7 @@ import {
   ConditionMarket,
   PriceMarket,
   PriceMarketSerie,
+  CollateralToken,
   DpmMarket,
   DpmOutcome,
   DpmPosition,
@@ -255,6 +256,30 @@ function getOrCreatePriceMarketSerie(
 /** Active while any member window is unresolved; Resolved once all have settled. */
 function applySeriesStatus(series: PriceMarketSerie): void {
   series.status = series.unresolvedCount.gt(BigInt.zero()) ? 'Active' : 'Resolved';
+}
+
+/**
+ * Collateral-token decimals, cached on a CollateralToken entity. The first market
+ * for a given token does the onchain decimals() read; every subsequent market
+ * reads the stored value — collapsing one eth_call per market into one per unique
+ * collateral. Defaults to 18 if the read reverts.
+ */
+function getCollateralDecimals(token: Address, timestamp: BigInt): i32 {
+  let id = token.toHexString();
+  let cached = CollateralToken.load(id);
+  if (cached != null) return cached.decimals;
+
+  let result = ERC20.bind(token).try_decimals();
+  let decimals = result.reverted ? 18 : result.value;
+  if (result.reverted) {
+    log.warning('Failed to fetch decimals for collateral token {}', [id]);
+  }
+
+  let entity = new CollateralToken(id);
+  entity.decimals = decimals;
+  entity.firstSeenAt = timestamp;
+  entity.save();
+  return decimals;
 }
 
 /**
@@ -605,17 +630,12 @@ export function handleMarketCreated(event: MarketCreated): void {
   conditionMarket.marketId = marketId.toString();
   conditionMarket.save();
 
-  // Fetch collateral token decimals (one-time RPC call per market)
-  let collateralContract = ERC20.bind(event.params.collateralToken);
-  let decimalsResult = collateralContract.try_decimals();
-  if (decimalsResult.reverted) {
-    log.warning('Failed to fetch decimals for collateral token {}', [
-      event.params.collateralToken.toHexString(),
-    ]);
-    market.collateralDecimals = 18; // Default to 18 if call fails
-  } else {
-    market.collateralDecimals = decimalsResult.value;
-  }
+  // Collateral decimals, cached per token (one eth_call per unique collateral
+  // instead of one per market).
+  market.collateralDecimals = getCollateralDecimals(
+    event.params.collateralToken,
+    event.block.timestamp,
+  );
 
   // Set group association if grouped market
   let groupId = event.params.groupId;
