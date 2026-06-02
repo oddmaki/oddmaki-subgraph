@@ -142,11 +142,10 @@ type PriceMarketSerie @entity(immutable: false) {
   kind: String! # "updown" (parsed from seriesKey)
   interval: String! # "5m" (parsed from seriesKey)
   intervalSeconds: BigInt! # 300 (parsed interval in seconds; 0 if unparseable)
-  currentMarket: Market # Next-to-resolve unresolved market in the series
-  status: MarketStatus! # Derived from currentMarket (Active while any unresolved, Resolved otherwise)
-  tags: [String!]! # Tags from the currentMarket (so filter tags like "crypto" surface)
-  marketIds: [String!]! # Full history of market IDs in this series (for client pagination)
-  unresolvedMarketIds: [String!]! # Active set: created-but-unresolved windows. Pruned on resolution so the currentMarket scan stays O(open windows), not O(all history).
+  currentMarket: Market # Vestigial — no longer maintained (always null). The live window is derived on the client at query time. Kept so existing feed queries that select it keep resolving; drop once no client selects it.
+  status: MarketStatus! # Active while any member window is unresolved, Resolved once all settle (driven by unresolvedCount, O(1))
+  unresolvedCount: BigInt! # Count of member windows not yet resolved. Drives status; lets the grid filter out dead series at the DB level. Maintained O(1).
+  tags: [String!]! # Filter tags carried from member markets (so tags like "crypto" surface)
   createdAt: BigInt! # Block timestamp when series was first seen
   updatedAt: BigInt! # Last update timestamp
   markets: [Market!]! @derivedFrom(field: "priceSeries")

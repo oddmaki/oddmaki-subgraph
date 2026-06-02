@@ -245,106 +245,27 @@ function getOrCreatePriceMarketSerie(
   series.intervalSeconds = parseIntervalToSeconds(series.interval);
   series.status = 'Active';
   series.tags = [];
-  series.marketIds = [];
-  series.unresolvedMarketIds = [];
+  series.unresolvedCount = BigInt.zero();
   series.createdAt = timestamp;
   series.updatedAt = timestamp;
   series.save();
   return series;
 }
 
-/** Append `id` to `arr` if not already present. Returns the same array. */
-function pushUnique(arr: string[], id: string): string[] {
-  for (let i = 0; i < arr.length; i++) {
-    if (arr[i] == id) return arr;
-  }
-  arr.push(id);
-  return arr;
-}
-
-/** Return a new array with every occurrence of `id` removed. */
-function removeFromArray(arr: string[], id: string): string[] {
-  let out: string[] = [];
-  for (let i = 0; i < arr.length; i++) {
-    if (arr[i] != id) out.push(arr[i]);
-  }
-  return out;
-}
-
-/**
- * Pick the "current" unresolved market for a series, preferring the one that is
- * actually live right now.
- *
- * A window that has closed but whose Pyth resolution still lags keeps status
- * != Resolved for a short while. By closeTime alone that stale window would
- * shadow the window that is already open and tradeable, so clients (e.g. the
- * grid card) would route to a closed market. We therefore prefer, in order:
- *   1. the live market — openTime <= now < closeTime — soonest-closing if many;
- *   2. otherwise the earliest-closing unresolved market (next to resolve, or
- *      the next upcoming window when nothing is open yet).
- */
-function findNextCurrentMarket(
-  series: PriceMarketSerie,
-  timestamp: BigInt,
-): string | null {
-  let liveId: string | null = null;
-  let liveCloseTime: BigInt = BigInt.zero();
-  let fallbackId: string | null = null;
-  let fallbackCloseTime: BigInt = BigInt.zero();
-  // Scan only the active set (created-but-unresolved windows), not the full
-  // history. Resolved windows are pruned on resolution, so for a short-interval
-  // series this is O(1-2) instead of O(all windows ever). The status guard is
-  // kept as a defensive backstop in case a stale id slips through.
-  let marketIds = series.unresolvedMarketIds;
-  for (let i = 0; i < marketIds.length; i++) {
-    let mId = marketIds[i];
-    let m = Market.load(mId);
-    if (m == null) continue;
-    if (m.status == 'Resolved' || m.status == 'Invalid') continue;
-    let pm = PriceMarket.load(mId);
-    if (pm == null) continue;
-
-    if (fallbackId == null || pm.closeTime.lt(fallbackCloseTime)) {
-      fallbackId = mId;
-      fallbackCloseTime = pm.closeTime;
-    }
-
-    let isLive =
-      pm.openTime.le(timestamp) && pm.closeTime.gt(timestamp);
-    if (isLive && (liveId == null || pm.closeTime.lt(liveCloseTime))) {
-      liveId = mId;
-      liveCloseTime = pm.closeTime;
-    }
-  }
-  return liveId != null ? liveId : fallbackId;
-}
-
-/**
- * Recompute series.currentMarket, series.tags, and series.status based on member markets.
- * Call after any change that could affect which market is current (creation, tag change,
- * resolution).
- */
-function refreshSeriesCurrent(series: PriceMarketSerie, timestamp: BigInt): void {
-  let nextId = findNextCurrentMarket(series, timestamp);
-  if (nextId == null) {
-    series.currentMarket = null;
-    series.status = 'Resolved';
-    // Leave tags as-is — last current's tags are the most recent filterable set
-  } else {
-    let nextIdStr = nextId as string;
-    series.currentMarket = nextIdStr;
-    series.status = 'Active';
-    let current = Market.load(nextIdStr);
-    if (current != null) series.tags = current.tags;
-  }
-  series.updatedAt = timestamp;
-  series.save();
+/** Active while any member window is unresolved; Resolved once all have settled. */
+function applySeriesStatus(series: PriceMarketSerie): void {
+  series.status = series.unresolvedCount.gt(BigInt.zero()) ? 'Active' : 'Resolved';
 }
 
 /**
  * Reconcile a market's membership in a PriceMarketSerie based on its current tags.
- * Handles: first attachment, series-key change, detachment. Updates marketIds on both
- * old and new series and refreshes currentMarket on whichever changed.
+ * Handles first attachment, series-key change, and detachment.
+ *
+ * O(1): membership lives on Market.priceSeries (and the derived `markets`
+ * relation). The series stores only `unresolvedCount`, which drives `status` and
+ * lets the grid filter out dead series. The "current" window is derived on the
+ * client at query time (bounded, indexed) — recomputing it here on every event
+ * was the indexing bottleneck, and it scaled O(history) per series.
  */
 function reconcileMarketSeries(market: Market, timestamp: BigInt): void {
   let newSeriesKey = extractSeriesKey(market.tags);
@@ -353,12 +274,13 @@ function reconcileMarketSeries(market: Market, timestamp: BigInt): void {
     newEntityId = seriesEntityId(market.venue, newSeriesKey as string);
   }
   let oldEntityId = market.priceSeries;
+  let isUnresolved = market.status != 'Resolved' && market.status != 'Invalid';
 
   if (newEntityId == oldEntityId) {
-    // No membership change. Still refresh tags on current series if this is its current market.
+    // No membership change — keep the series' filter tags current.
     if (newEntityId != null) {
       let series = PriceMarketSerie.load(newEntityId as string);
-      if (series != null && series.currentMarket == market.id) {
+      if (series != null) {
         series.tags = market.tags;
         series.updatedAt = timestamp;
         series.save();
@@ -367,43 +289,37 @@ function reconcileMarketSeries(market: Market, timestamp: BigInt): void {
     return;
   }
 
-  // Detach from old series
+  // Detach from old series.
   if (oldEntityId != null) {
     let oldSeries = PriceMarketSerie.load(oldEntityId as string);
     if (oldSeries != null) {
-      oldSeries.marketIds = removeFromArray(oldSeries.marketIds, market.id);
-      oldSeries.unresolvedMarketIds = removeFromArray(
-        oldSeries.unresolvedMarketIds,
-        market.id,
-      );
-      refreshSeriesCurrent(oldSeries, timestamp);
+      if (isUnresolved && oldSeries.unresolvedCount.gt(BigInt.zero())) {
+        oldSeries.unresolvedCount = oldSeries.unresolvedCount.minus(BigInt.fromI32(1));
+      }
+      applySeriesStatus(oldSeries);
+      oldSeries.updatedAt = timestamp;
+      oldSeries.save();
     }
     market.priceSeries = null;
   }
 
-  // Attach to new series
+  // Attach to new series.
   if (newSeriesKey != null) {
     let newSeries = getOrCreatePriceMarketSerie(
       market.venue,
       newSeriesKey as string,
       timestamp,
     );
-    newSeries.marketIds = pushUnique(newSeries.marketIds, market.id);
-    // Only unresolved windows belong in the active set the currentMarket scan
-    // walks. (Tag edits can reconcile an already-resolved market.)
-    if (market.status != 'Resolved' && market.status != 'Invalid') {
-      newSeries.unresolvedMarketIds = pushUnique(
-        newSeries.unresolvedMarketIds,
-        market.id,
-      );
+    if (isUnresolved) {
+      newSeries.unresolvedCount = newSeries.unresolvedCount.plus(BigInt.fromI32(1));
     }
+    newSeries.tags = market.tags;
+    applySeriesStatus(newSeries);
+    newSeries.updatedAt = timestamp;
+    newSeries.save();
     market.priceSeries = newSeries.id;
-    refreshSeriesCurrent(newSeries, timestamp);
   }
 
-  // Persist the market's priceSeries back-pointer (the calling handler already
-  // did its own market.save() before invoking reconcile, so we need to commit
-  // the membership change explicitly).
   market.save();
 }
 
@@ -2161,17 +2077,18 @@ export function handleMarketResolved(event: MarketResolved): void {
     }
   }
 
-  // Rotate the price market series' current pointer if this market was its current.
-  if (market.priceSeries != null) {
+  // This window settled — drop it from the series' unresolved count (O(1)). When
+  // the count hits zero the series flips to Resolved. The "current" window is
+  // derived on the client, so there's nothing to recompute here.
+  if (market.priceSeries != null && wasActive) {
     let series = PriceMarketSerie.load(market.priceSeries as string);
     if (series != null) {
-      // Prune the now-resolved window from the active set so the currentMarket
-      // scan never walks it again. This is what keeps the scan O(open windows).
-      series.unresolvedMarketIds = removeFromArray(
-        series.unresolvedMarketIds,
-        market.id,
-      );
-      refreshSeriesCurrent(series, event.block.timestamp);
+      if (series.unresolvedCount.gt(BigInt.zero())) {
+        series.unresolvedCount = series.unresolvedCount.minus(BigInt.fromI32(1));
+      }
+      applySeriesStatus(series);
+      series.updatedAt = event.block.timestamp;
+      series.save();
     }
   }
 
@@ -2479,15 +2396,9 @@ export function handlePriceMarketCreatedPyth(event: PriceMarketCreatedPyth): voi
   market.priceMarket = pm.id;
   market.save();
 
-  // Now that closeTime is set, recompute the series' currentMarket if this market
-  // belongs to one. MarketCreated already registered membership; this is the first
-  // moment we can correctly order by closeTime.
-  if (market.priceSeries != null) {
-    let series = PriceMarketSerie.load(market.priceSeries as string);
-    if (series != null) {
-      refreshSeriesCurrent(series, event.block.timestamp);
-    }
-  }
+  // Series membership + unresolved count were already handled by reconcileMarketSeries
+  // in handleMarketCreated. Nothing to recompute here — the live window is derived
+  // on the client, so this handler no longer scans the series.
 
   log.info('PriceMarketCreatedPyth: market {} feed {} strikePrice {} closeTime {}', [
     marketId.toString(),
