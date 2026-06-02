@@ -606,16 +606,6 @@ type ConditionMarket @entity(immutable: true) {
   marketId: String! # Market entity ID
 }
 
-# Cache of an ERC20 collateral token's decimals. The first market that uses a
-# token does the onchain decimals() read; every subsequent market reads the
-# stored value, collapsing thousands of redundant eth_calls (one per market)
-# into one per unique collateral.
-type CollateralToken @entity(immutable: false) {
-  id: ID! # token address (lowercase hex)
-  decimals: Int!
-  firstSeenAt: BigInt! # block timestamp of the first market to use this token
-}
-
 type MarketDailySnapshot @entity(immutable: true) {
   id: ID! # marketId + day timestamp
   market: Market! # Parent market

@@ -64,7 +64,6 @@ import {
   OrderAutoCancelled,
   OddMaki,
 } from '../generated/OddMaki/OddMaki';
-import { ERC20 } from '../generated/OddMaki/ERC20';
 import { PayoutRedemption } from '../generated/ConditionalTokens/ConditionalTokens';
 import {
   Venue,
@@ -85,7 +84,6 @@ import {
   ConditionMarket,
   PriceMarket,
   PriceMarketSerie,
-  CollateralToken,
   DpmMarket,
   DpmOutcome,
   DpmPosition,
@@ -100,6 +98,11 @@ import {
 import { generateId } from './helpers/utils';
 
 const SCALE = BigInt.fromString('1000000000000000000'); // 1e18
+
+// All supported collateral (USDC / MockUSDC) is 6 decimals. Hardcoded so market
+// creation never makes an ERC20.decimals() eth_call — eth_calls are the main
+// source of block-specific indexing stalls and are the slowest thing in a handler.
+const COLLATERAL_DECIMALS: i32 = 6;
 
 /**
  * Track unique traders per market. Creates a MarketTrader entity on first trade
@@ -256,30 +259,6 @@ function getOrCreatePriceMarketSerie(
 /** Active while any member window is unresolved; Resolved once all have settled. */
 function applySeriesStatus(series: PriceMarketSerie): void {
   series.status = series.unresolvedCount.gt(BigInt.zero()) ? 'Active' : 'Resolved';
-}
-
-/**
- * Collateral-token decimals, cached on a CollateralToken entity. The first market
- * for a given token does the onchain decimals() read; every subsequent market
- * reads the stored value — collapsing one eth_call per market into one per unique
- * collateral. Defaults to 18 if the read reverts.
- */
-function getCollateralDecimals(token: Address, timestamp: BigInt): i32 {
-  let id = token.toHexString();
-  let cached = CollateralToken.load(id);
-  if (cached != null) return cached.decimals;
-
-  let result = ERC20.bind(token).try_decimals();
-  let decimals = result.reverted ? 18 : result.value;
-  if (result.reverted) {
-    log.warning('Failed to fetch decimals for collateral token {}', [id]);
-  }
-
-  let entity = new CollateralToken(id);
-  entity.decimals = decimals;
-  entity.firstSeenAt = timestamp;
-  entity.save();
-  return decimals;
 }
 
 /**
@@ -630,12 +609,8 @@ export function handleMarketCreated(event: MarketCreated): void {
   conditionMarket.marketId = marketId.toString();
   conditionMarket.save();
 
-  // Collateral decimals, cached per token (one eth_call per unique collateral
-  // instead of one per market).
-  market.collateralDecimals = getCollateralDecimals(
-    event.params.collateralToken,
-    event.block.timestamp,
-  );
+  // Collateral decimals: constant for USDC/MockUSDC (6). No eth_call.
+  market.collateralDecimals = COLLATERAL_DECIMALS;
 
   // Set group association if grouped market
   let groupId = event.params.groupId;
