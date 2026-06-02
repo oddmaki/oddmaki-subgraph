@@ -228,6 +228,25 @@ type DpmPosition @entity(immutable: false) {
   lastUpdatedAt: BigInt!
 }
 
+# One immutable row per pool entry (DpmEntered). Powers the Pool odds chart
+# (impliedYesPct over time) and the activity feed. Snapshots the pool state right
+# after the entry, so clients never recompute history.
+type DpmEntry @entity(immutable: true) {
+  id: ID! # txHash-logIndex
+  dpmMarket: DpmMarket!
+  market: Market!
+  trader: User!
+  outcome: Int! # entered outcome index
+  outcomeLabel: String! # entered outcome label (for activity display)
+  amount: BigInt! # collateral deposited (gross)
+  shares: BigInt! # shares minted
+  impliedYesPct: Int! # outcome 0's share of the pool right after this entry (for the odds chart)
+  totalCollateral: BigInt! # pool total after the entry
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+}
+
 enum MarketStatus {
   Draft # Market created but not yet active (for market groups)
   Active # Market is active and trading

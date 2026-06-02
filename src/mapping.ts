@@ -87,6 +87,7 @@ import {
   DpmMarket,
   DpmOutcome,
   DpmPosition,
+  DpmEntry,
 } from '../generated/schema';
 import {
   getOrCreateUser,
@@ -2705,6 +2706,32 @@ export function handleDpmEntered(event: DpmEntered): void {
   }
   dpm.updatedAt = event.block.timestamp;
   dpm.save();
+
+  // Snapshot the entry for the odds chart + activity feed. impliedYesPct is
+  // outcome 0's share of the pool right after this entry (binary markets; for
+  // N-outcome it's still outcome 0's share, which clients can extend later).
+  let yesOutcome = DpmOutcome.load(marketId.toString() + '-0');
+  let yesCollateral = yesOutcome != null ? yesOutcome.collateral : BigInt.zero();
+  let impliedYes = dpm.totalCollateral.gt(BigInt.zero())
+    ? yesCollateral.times(BigInt.fromI32(100)).div(dpm.totalCollateral).toI32()
+    : 50;
+
+  let entry = new DpmEntry(
+    event.transaction.hash.toHexString() + '-' + event.logIndex.toString(),
+  );
+  entry.dpmMarket = dpm.id;
+  entry.market = marketId.toString();
+  entry.trader = event.params.user.toHexString();
+  entry.outcome = outcomeIdx.toI32();
+  entry.outcomeLabel = oc != null ? oc.label : '';
+  entry.amount = event.params.amount;
+  entry.shares = event.params.shares;
+  entry.impliedYesPct = impliedYes;
+  entry.totalCollateral = dpm.totalCollateral;
+  entry.timestamp = event.block.timestamp;
+  entry.blockNumber = event.block.number;
+  entry.txHash = event.transaction.hash;
+  entry.save();
 }
 
 export function handleDpmClaimed(event: DpmClaimed): void {
