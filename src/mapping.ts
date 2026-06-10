@@ -53,6 +53,7 @@ import {
   PositionsMerged,
   PriceMarketCreatedPyth,
   PriceMarketResolvedPyth,
+  PriceMarketInvalidated,
   DpmMarketCreated,
   DpmPoolSeeded,
   DpmIntentEntered,
@@ -2431,6 +2432,38 @@ export function handlePriceMarketResolvedPyth(event: PriceMarketResolvedPyth): v
     event.params.strikePrice.toString(),
     event.params.finalPrice.toString(),
     event.params.outcome,
+  ]);
+}
+
+export function handlePriceMarketInvalidated(event: PriceMarketInvalidated): void {
+  let marketId = event.params.marketId;
+
+  // Invalidation routes through LibResolutionService.resolveMarket with outcome
+  // "INVALID", so handleMarketResolved has already run for this tx and set the
+  // base Market status to 'Resolved' (no outcome matched). Correct it to the
+  // terminal 'Invalid' status — holders redeem 50/50 rather than by a winner.
+  // handleMarketResolved leaves resolvedOutcome unset for the "INVALID" outcome
+  // (no matching index), so there's nothing to clear here.
+  let market = Market.load(marketId.toString());
+  if (market != null) {
+    market.status = 'Invalid';
+    market.resolvedAt = event.block.timestamp;
+    market.save();
+  }
+
+  // Mirror onto the PriceMarket overlay so on-chain and subgraph agree.
+  let pm = PriceMarket.load(marketId.toString());
+  if (pm != null) {
+    pm.resolved = true;
+    pm.outcome = 'INVALID';
+    pm.resolvedAt = event.block.timestamp;
+    pm.isStrikeDeferred = false;
+    pm.save();
+  }
+
+  log.info('PriceMarketInvalidated: market {} caller {}', [
+    marketId.toString(),
+    event.params.caller.toHexString(),
   ]);
 }
 
